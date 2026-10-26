@@ -80,9 +80,9 @@ HDR-composited Kodi GUI. Every one of his commits is cherry-picked here with
 His Kodi commits are replayed onto CoreELEC's own Kodi tree in the same way.
 His update-checker add-on and his boot splash are not carried.
 
-**Symphony's commits.** On top of both: 41 commits in Kodi and the rest in
-the CoreELEC tree (kernel drivers, `libbluray`, packaging). They are listed
-in "What the fork fixes" below. Each Kodi change is a commit on
+**Symphony's commits.** On top of both, in Kodi and in the CoreELEC tree
+(kernel drivers, `libbluray`, packaging). They are listed in "What the fork
+fixes" below. Each Kodi change is a commit on
 `alexscotti/xbmc` `symphony`, and the CoreELEC fork pins the exact Kodi
 commit in `kodi/package.mk`.
 
@@ -107,6 +107,23 @@ build decodes VC-1 and MPEG-1/2 in software on this chip instead, cleanly,
 at 10-28% CPU per core. Every other codec, and every other chip, is
 unchanged.
 
+### HDMI output
+
+- Audio stays muted across an audio format change on the HDMI link.
+  Together with "Keep audio device alive" off (see Defaults), a TrueHD
+  trailer into an AC-3 menu no longer bursts static.
+- The HDMI driver no longer sleeps 1.5 s inside its HDR work item.
+- Dolby Vision signalling is corrected when it goes wrong: a link carrying
+  DV the wrong way is re-trained (also while a disc session holds DV), native
+  DV is re-requested when the DV core was left on a conversion or disabled by
+  an unplug, and the change is made without blocking playback.
+- An HDR type change at an unchanged display mode updates the link in place.
+- An HDMI unplug or reconnect: the display's capabilities are kept while it
+  is disconnected, a reconnect at the same mode does not rebuild the window,
+  the GUI is repainted, and the video keeps its output mode.
+- Leaving 3D no longer ends on a black screen: the HDMI PHY is set up again
+  after the last mode change out of 3D.
+
 ### Dolby Vision
 
 - An FEL title keeps its enhancement layer: the HEVC decoder and the `amdv`
@@ -127,8 +144,16 @@ unchanged.
   reset at a join only happens when the new clip has not yet fed a keyframe.
   This removes multi-second freezes where an intro joins the film.
 - Enhancement-layer pairing: an enhancement layer is owed only to a
-  base-layer frame that is still missing one.
-- The HEVC decoder's wait for the memory controller to go idle is bounded.
+  base-layer frame that is still missing one; a base-layer keyframe without
+  a decode timestamp drops a stale enhancement layer and never pairs with an
+  incoming non-keyframe one.
+- The HEVC decoder never discards the start of its input, and never takes a
+  picture it already output as a new first frame.
+- The HEVC decoder's wait for the memory controller to go idle is bounded,
+  and a legacy decoder's stream fetch is stopped before its memory port
+  closes.
+- Video timestamps are checked in at the stream offset they were written at
+  (matthane).
 
 ### Blu-ray and BD-J menus
 
@@ -158,6 +183,11 @@ unchanged.
 - Opening a disc no longer reads every playlist on it.
 - A secondary (picture-in-picture) video track is never chosen as the
   feature.
+- Timed still menus (an FBI warning, for example) are released when their
+  time is up instead of sticking.
+- Fast forward and rewind work in a BD-J title, refused only where the disc
+  forbids seeking.
+- Kodi no longer crashes reading the current item during a title change.
 - Disc-menu state is published to the controller over JSON-RPC
   (`VideoPlayer.DiscMenuState`, and `VideoPlayer.DiscMenuSignals` with the
   raw inputs: graphics, seeking, BD-J, pop-up, playlist, still).
@@ -168,6 +198,18 @@ unchanged.
   disc structure: it follows the playing playlist and reads the next clip
   before the current one ends. Single files (`.mkv`) get plain read-ahead.
   Settings > Services > Caching (256 MB by default; 0 turns it off).
+
+### Playitem seams and seeks
+
+- An audio-only change at a playitem boundary keeps the video decoder, and
+  the end of a segment drains and presents its queued pictures instead of
+  resetting the decoders at the seam.
+- Blu-ray display time is anchored at the demuxer open.
+- After a seek, a stale audio start no longer holds the clock back (a frozen
+  picture), and untimed fragments from before the seek are dropped before the
+  decoder.
+- A reused Blu-ray stream with no stated HD colour description is taken as
+  BT.709.
 
 ### Demuxer
 
@@ -190,11 +232,30 @@ unchanged.
 - A software-decoded segment (for example an MPEG-2 film after a
   hardware-decoded menu) gets a renderer that can draw it, and its frames
   are released: this was a memory leak that ran the box out of memory.
-- An HDMI reconnect during playback keeps the video's output mode.
+- Kodi's vertical picture shift works with frame-packed 3D: both eyes move
+  and the picture keeps its height.
+- The 3D stereo mode is no longer read from a stale cache.
 
 ### Defaults and platform
 
-- Amlogic noise reduction is off by default.
+Kodi and CoreELEC defaults this build changes, so a disc plays as authored
+out of the box (each can still be changed in Kodi's settings):
+
+- Blu-ray playback opens the disc's own menus.
+- Audio passthrough on, to the AM9 Pro's HDMI output, 7.1 speaker layout.
+- "Keep audio device alive" off: streamed silence through silent menus
+  caused loud static when the next menu's audio started.
+- 3D plays in the preferred mode without asking (the question dialog would
+  wedge a box driven over JSON-RPC).
+- No thumbnail, flag or HDR10+ extraction passes over the library.
+- Kodi's crash-loop "safe mode", which moves the whole profile aside, is
+  off.
+- Amlogic noise reduction is off.
+- The Ugoos UR-02 remote works out of the box.
+- AirPlay and Samba file sharing are off (see Security).
+
+Platform:
+
 - The boot script finds the stick's boot configuration on any USB disk, not
   only the first.
 - The system features in "What this build adds to the box".
@@ -206,8 +267,9 @@ unchanged.
   installs into the slot that is NOT running, so the running system is never
   touched. If the new kernel will not load, the box falls back to the other
   slot, and going back is one click and a reboot. CoreELEC's own
-  `/storage/.update` mechanism is disabled on a slot stick, because it would
-  overwrite the running slot.
+  `/storage/.update` mechanism and its online updater are disabled on a slot
+  stick: an update would overwrite the running slot, and the updater can
+  only offer official CoreELEC. The Updates menu is hidden.
 - **Host Management web page** on port 80 at
   `http://symphony-coreelec-0.local/host_management`: shows both slots and
   the CoreELEC and Kodi commits each was built from (linked to GitHub);
@@ -464,8 +526,9 @@ system is still in the other slot, unchanged. If the new kernel does not load
 at all, the box falls back to the other slot by itself.
 
 Updates keep `/storage`: settings and the Dolby Vision module stay as they
-are. CoreELEC's own update mechanism (`/storage/.update`) is not used
-on this stick, because it would overwrite the running slot.
+are. CoreELEC's own update mechanism (`/storage/.update`) and its online
+updater are disabled on this stick, because an update would overwrite the
+running slot.
 
 From a build host, the same can be done from the command line:
 
@@ -512,8 +575,9 @@ without booting.
 ## Configuration
 
 `/storage` holds no configuration from this build: every default is in the
-image. Settings changed on the box are kept across updates, because an
-update only writes a slot. `--wipe-storage` on an install resets `/storage`
+image, and is put back on every boot where it is missing (a reset profile
+gets this build's settings again, not Kodi's). Settings changed on the box
+are kept across updates, because an update only writes a slot. `--wipe-storage` on an install resets `/storage`
 to what a new stick has.
 
 ## Support
@@ -548,7 +612,9 @@ internet.
   trigger them. (Upload cannot be triggered this way: it needs a CORS
   preflight the server does not answer.)
 - **Bundles are not signed.** The checksums in a bundle's MANIFEST catch a
-  corrupted upload, not a malicious one. A bundle's installer runs as root.
+  corrupted upload, not a malicious one. A bundle's installer runs as root,
+  as does an optional extension a bundle may carry (`extra.tar`; release
+  bundles carry none).
 - **SSH is on by default with CoreELEC's default root password, `coreelec`.**
   Change it with `passwd` on first boot.
 - **A USB stick present at boot can supply a kernel module.** `dovi.ko` is
@@ -559,10 +625,9 @@ internet.
   default). If you turn it on in CoreELEC's settings, turn on Samba password
   authentication and change its password from `coreelec`: unsecured, it
   lets anyone on the network write to the box's configuration as root.
-- **AirPlay is on, with no password.** CoreELEC turns AirPlay on by default
-  and Kodi's AirPlay password is off, so any device on the network can play
-  to the box. Turn it off in Kodi's settings (Services -> AirPlay) if you do
-  not use it.
+- **AirPlay is off** in this build (CoreELEC turns it on by default). If you
+  turn it on, set its password (Services -> AirPlay): without one, any device
+  on the network can play to the box.
 - **Kodi's web server (JSON-RPC over HTTP) is off** by default. If you turn
   it on to control the box from another system, authentication is on by
   default with username `kodi` and an empty password; set a password.
@@ -579,6 +644,7 @@ internet.
 - [Kodi](https://github.com/xbmc/xbmc) and CoreELEC's Kodi tree.
 - [SamuriHL](https://github.com/SamuriHL/CoreELEC), whose disc-playback work
   this fork carries commit for commit.
+- matthane, for the video timestamp check-in fix in the decoder.
 - Azul Zulu 8 JRE (BD-J).
 
 Each component keeps its own licence; the fork's own files are GPL-2.0 or
