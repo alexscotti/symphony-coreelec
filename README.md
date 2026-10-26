@@ -297,9 +297,9 @@ are owned, not a handful of sample files. The harness is not part of this repo: 
 through the home-automation system it was built for. Its method and results
 are described here.
 
-**The whole library, one disc at a time.** Every movie in a collection of
-approximately 1000 Blu-ray, UHD Blu-ray and 3D movies, ripped from discs
-that are owned, is played on the AM9 Pro, unattended, exactly as the controlling system would play it: the full disc folder where
+**The whole library, one disc at a time.** Every movie in a library of over
+1000 Blu-ray, UHD Blu-ray and 3D discs, ripped from discs that are owned, is
+played on the AM9 Pro, unattended, exactly as the controlling system would play it: the full disc folder where
 the disc is played from its menus, the single video file where it is not.
 For a disc played from its folder the test waits for the disc's own menu,
 checks a picture is actually drawn, and presses Select until the feature
@@ -328,12 +328,9 @@ bursts. Each disc starts from a clean BD-J store, so it plays its first-play
 path rather than a resume prompt. Every step is time-bounded; a decoder that
 wedges is recorded as such, the box is power-cycled, and the run continues.
 
-**Results.** Every movie in the collection passes. Getting there took a fix
-for each failure the full runs turned up; those fixes are most of "What the
-fork fixes" above. The whole library is re-run against new builds.
-
-<!-- TODO before publishing: confirm with a full library run at 100%
-     (date + image), and add that run's date here. -->
+**Results.** This build has been tested on that library of over 1000 discs.
+The fixes for what those runs turned up are most of "What the fork fixes"
+above, and the library is re-run against new builds.
 
 **Focused suites,** run for every Kodi change before it is pinned:
 
