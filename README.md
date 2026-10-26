@@ -162,6 +162,13 @@ unchanged.
   (`VideoPlayer.DiscMenuState`, and `VideoPlayer.DiscMenuSignals` with the
   raw inputs: graphics, seeking, BD-J, pop-up, playlist, still).
 
+### Network read-ahead
+
+- Blu-ray folders on a network share get read-ahead that understands the
+  disc structure: it follows the playing playlist and reads the next clip
+  before the current one ends. Single files (`.mkv`) get plain read-ahead.
+  Settings > Services > Caching (256 MB by default; 0 turns it off).
+
 ### Demuxer
 
 - Packets of streams outside the program are read past instead of stalling
