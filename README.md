@@ -425,6 +425,16 @@ After the first boot:
 Swapping system sticks later needs no Android step: power off, swap, power
 on.
 
+### Playing a disc folder
+
+Add your share in Kodi: Videos, Files, Add videos..., Browse, Add network
+location. With the source's content left as "None", selecting a disc's folder
+opens it like any other folder: go into its `BDMV` folder and select
+`index.bdmv`. The disc then plays as the disc does, from its first-play
+title into its own menu. To have selecting the disc's folder play it
+instead, set the source's content to Movies (Kodi then scrapes the
+library).
+
 ### Updating, after the first install
 
 Updates go over the network and never touch the running system. The stick
