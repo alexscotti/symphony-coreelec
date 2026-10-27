@@ -379,7 +379,7 @@ case "$cmd" in
     [ -n "$new" ] || { echo "cebuild: could not check out $ref" >&2; exit 1; }
     if [ "$new" != "$PIN" ]; then
       echo "$new" > "$PIN_FILE"
-      echo "PIN: $PIN -> $new   (commit tools/coreelec-build/PIN)"
+      echo "PIN: $PIN -> $new   (commit PIN)"
     fi
     ;;
   rebase)

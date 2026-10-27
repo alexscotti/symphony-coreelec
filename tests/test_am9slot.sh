@@ -1,7 +1,7 @@
 #!/bin/sh
 # test_am9slot.sh - drive am9slot.sh through install / goback / refusal cases
 # against a fake /flash, under busybox sh like the box. From the Mac:
-#   tools/coreelec-build/tests/test_am9slot.sh
+#   tests/test_am9slot.sh
 # re-runs itself in a busybox container.
 if [ -z "${IN_CONTAINER:-}" ]; then
   d="$(cd "$(dirname "$0")/.." && pwd)"
