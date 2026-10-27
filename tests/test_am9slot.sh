@@ -72,6 +72,12 @@ echo stale > $W/flash/dovi_B.ko
 run install $W/v2; expect_rc 0 "install over a slot that has a dovi_B.ko"
 [ -e $W/flash/dovi_B.ko ] && bad "stale dovi_B.ko survived the install" || ok "stale dovi_B.ko removed"
 [ -e $W/flash/dovi_A.ko ] && bad "wrote a dovi_A.ko" || ok "no dovi.ko written into a slot"
+# --- a stick's SLOT_B.extra.tar goes stale when slot B is rewritten
+reset
+echo stale > $W/flash/SLOT_B.extra.tar; echo keep > $W/flash/SLOT_A.extra.tar
+run install $W/v2; expect_rc 0 "install over a slot with a SLOT_B.extra.tar"
+[ -e $W/flash/SLOT_B.extra.tar ] && bad "stale SLOT_B.extra.tar survived" || ok "stale SLOT_B.extra.tar removed"
+[ -f $W/flash/SLOT_A.extra.tar ] && ok "SLOT_A.extra.tar of the running slot left alone" || bad "SLOT_A.extra.tar removed"
 
 # --- the extension landed in storage, keyed by version, and its install ran
 # with (storage, version)

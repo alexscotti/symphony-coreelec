@@ -258,7 +258,9 @@ case "$cmd" in
     # dovi_$t.ko is removed too: older slots had one, and leaving it behind
     # would keep the fork's loader preferring a stale module over the one
     # symphony-dovi captures.
-    rm -f "$F/kernel_$t.img" "$F/SYSTEM_$t" "$F/dovi_$t.ko"; sync
+    # SLOT_$t.extra.tar too: a stick carries slot A's extension on the FAT,
+    # and it would be stale beside the slot written now.
+    rm -f "$F/kernel_$t.img" "$F/SYSTEM_$t" "$F/dovi_$t.ko" "$F/SLOT_$t.extra.tar"; sync
     echo "== copying into slot $t"
     cp "$src/kernel.img" "$F/kernel_$t.img" && cp "$src/SYSTEM" "$F/SYSTEM_$t" \
       || die "copy into slot $t failed (slot $t left without a manifest; $r still selected)"

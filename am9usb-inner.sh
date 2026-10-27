@@ -55,6 +55,9 @@ mcopy -i "$FAT" "$W/bundle/SYSTEM"     ::SYSTEM_A
 mcopy -i "$FAT" "$W/bundle/MANIFEST"   ::SLOT_A.manifest
 # The installer, for the box's web page (status, goback); installs refresh it.
 [ -f "$W/bundle/am9slot.sh" ] && mcopy -i "$FAT" "$W/bundle/am9slot.sh" ::am9slot.sh
+# Slot A's extension too, so slot A on this FAT is the whole bundle: the
+# box's web page installs a stick image by reading these files back out.
+[ -f "$W/bundle/extra.tar" ] && mcopy -i "$FAT" "$W/bundle/extra.tar" ::SLOT_A.extra.tar
 printf 'ceslot=A\n' > "$W/slot.ini"; mcopy -i "$FAT" "$W/slot.ini" ::slot.ini
 echo "   slot A: $(sed -n 's/^VERSION=//p' "$W/bundle/MANIFEST") ($(sed -n 's/^COREELEC_VERSION=//p' "$W/bundle/MANIFEST"))"
 # config.ini is the build's own now (the fork sets keymap='us' in it, the

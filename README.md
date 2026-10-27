@@ -273,7 +273,8 @@ Platform:
 - **Host Management web page** on port 80 at
   `http://symphony-coreelec-0.local/host_management`: shows both slots and
   the CoreELEC and Kodi commits each was built from (linked to GitHub);
-  uploads a slot bundle in resumable chunks; installs it; reboots; goes back.
+  uploads a slot bundle or a stick image in resumable chunks; installs it;
+  reboots; goes back.
 - **BD-J Java runtime in the image.** Disc menus written in Java work out of
   the box. No add-on to install.
 - **Dolby Vision module capture.** CoreELEC cannot ship Amlogic's `dovi.ko`
@@ -509,11 +510,14 @@ Updates go over the network and never touch the running system. The stick
 holds two complete systems, slot A and slot B; the first install fills slot
 A.
 
-1. Download the new release's `..._slot.tar`.
+1. Download the new release's `..._slot.tar`, or its stick image
+   `...-am9pro-usb.img.gz`: the page takes either (from an image it installs
+   the system inside it; the bundle is the same system, without the rest of
+   the stick).
 2. Open `http://symphony-coreelec-0.local/host_management`. It shows both
    slots, which one is running, and the CoreELEC and Kodi commits each was
    built from.
-3. Choose the bundle and upload it. The upload is chunked and resumable: an
+3. Choose the file and upload it. The upload is chunked and resumable: an
    interrupted upload carries on where it stopped.
 4. Press **Install**. The bundle's checksums are verified and it is written
    into the slot that is NOT running. Nothing can be installed while

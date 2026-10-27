@@ -3,7 +3,8 @@
 engine behind Safari, whose upload quirks shaped the page script), against
 the LIVE box:
 
-    tests/web_install_live.py <box> <bundle.tar> [--install] [--reboot] [--shots DIR]
+    tests/web_install_live.py <box> <bundle.tar | stick.img.gz> [--install] [--reboot] [--shots DIR]
+                              [--expect-version V]
 
 Uploads the bundle through the page's own file input and chunked uploader,
 then (--install) presses Install and follows the progress bar to "will be
@@ -36,12 +37,17 @@ def main():
     ap.add_argument('--install', action='store_true')
     ap.add_argument('--reboot', action='store_true')
     ap.add_argument('--shots', default='/tmp/web_install_live')
+    ap.add_argument('--expect-version', default='',
+                    help='for a stick image: the VERSION its slot A carries (a bundle names its own)')
     a = ap.parse_args()
     base = 'http://%s' % a.box
     os.makedirs(a.shots, exist_ok=True)
-    with tarfile.open(a.bundle) as tf:
-        man = dict(l.split('=', 1) for l in tf.extractfile('MANIFEST').read().decode().splitlines() if '=' in l)
-    version = man['VERSION']
+    if a.bundle.endswith('.img.gz'):
+        version = a.expect_version            # checked only when given
+    else:
+        with tarfile.open(a.bundle) as tf:
+            man = dict(l.split('=', 1) for l in tf.extractfile('MANIFEST').read().decode().splitlines() if '=' in l)
+        version = man['VERSION']
     before = status(base)
     print('box: running %s, selected %s; bundle %s' % (before['running'], before['selected'], version))
 
@@ -94,7 +100,7 @@ def main():
         print('install: %.0fs' % (time.time() - t0))
         st = status(base)
         tgt = st['selected']
-        ok = tgt != before['running'] and st['slots'][tgt]['version'] == version
+        ok = tgt != before['running'] and (not version or st['slots'][tgt]['version'] == version)
         print('selected %s = %s: %s' % (tgt, st['slots'][tgt]['version'], 'OK' if ok else 'WRONG'))
         if not ok:
             b.close()
@@ -117,7 +123,7 @@ def main():
     else:
         print('box did not come back within 5 minutes')
         return 1
-    ok = st['running'] == tgt and st['slots'][tgt]['version'] == version
+    ok = st['running'] == tgt and (not version or st['slots'][tgt]['version'] == version)
     print('after reboot (%.0fs): running %s = %s: %s'
           % (time.time() - t0, st['running'], st['slots'][st['running']]['version'], 'OK' if ok else 'WRONG'))
     with sync_playwright() as p:
