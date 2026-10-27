@@ -1,0 +1,295 @@
+#!/bin/bash
+# makeimgce - build the Symphony CoreELEC fork for the AM9 Pro at a version of
+# this repository, hand back a stick image, or (--deploy) install it live into
+# the box's other A/B slot. Run with --help. See README.md.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+  cat <<EOF
+Usage: makeimgce --version VERSION --full | --incremental | --no-build  [options]
+
+Builds the Symphony CoreELEC fork (official CoreELEC + SamuriHL's changes +
+Symphony's) for the Ugoos AM9 Pro, as of a commit of this repository, and
+leaves you a stick image - or, with --deploy, installs it on the running box.
+Checks every input BEFORE the build, so a missing dtb, a stopped Docker or
+an unreachable box costs seconds rather than hours.
+
+  --version VERSION which commit of this repository to build:
+                      current          this working tree, uncommitted changes
+                                       and all; the version is current-<date>
+                      last             the tip of main
+                      <branch>:last    the tip of <branch>
+                      <branch> | <sha> that commit
+                    Everything comes from that commit: PIN (so the fork
+                    commit), the dtb, flash/resolution.ini, and these scripts - it runs
+                    that commit's own makeimgce from a git worktree. The
+                    commit is the version every slot and stick carries.
+
+  --full            wipe the build tree first; every package is rebuilt from
+                    source. ~4-5 hours on an Apple-silicon Mac.
+  --incremental     keep the build tree and rebuild only what changed.
+  --no-build        skip the build and use what is already built for VERSION.
+
+  --wipe-storage    with --deploy: clear /storage back to what a freshly
+                    written stick has on it, so the image's own first-boot
+                    hooks supply every setting instead of finding older files
+                    already there. The only way to test that without burning a
+                    stick - a plain install cannot, because every hook is
+                    "only if missing". Keeps the slots' extensions and what
+                    they list, and .cache/services/sshd.conf when SSH needs
+                    it; stops Kodi first so it cannot rewrite guisettings.xml
+                    on the way down.
+
+  --deploy <box>    install on the running box: a digit N
+                    (symphony-coreelec-N.local) or an address. The box must
+                    answer BEFORE anything is
+                    built, and if it already runs VERSION there is nothing to
+                    do. Installs into the slot it is NOT running, reboots into
+                    it, and checks what came up.
+
+  --builddir <dir>  where the build volume, sources and output live.
+                    Default \$CEBUILD_ROOT, else ~/cebuild.
+                    Needs ~120GB free. A directory with no build volume in
+                    it gets "cebuild setup" run automatically.
+  -h, --help        this.
+
+The fork commit is PIN at VERSION. To build another one, move PIN
+("cebuild update <ref>"), commit it, and build that commit.
+
+Env: AM9_DTB_FILE (dtb to splice in), SYMPHONY_THEATER (see cebuild),
+     AM9_VERSION, AM9_EXTRA_BUILDER, AM9_SSH_PROXYCOMMAND (see am9usb),
+     CUSTOM_VERSION, BUILDER_NAME - see README.md.
+
+Examples:
+  makeimgce --version current --incremental             # what is on disk now
+  makeimgce --version last --full                       # main's tip, from scratch
+  makeimgce --version current --incremental --deploy 0  # build, install live on box 0
+  makeimgce --version <sha> --no-build --deploy 0       # put an existing build on the box
+EOF
+}
+
+[ $# -gt 0 ] || { usage >&2; exit 1; }
+
+ARGS=("$@")
+MODE=""; DEPLOY=""; WIPE_STORAGE=""; BUILD=1; CLEAN=1; VERSION_ARG=""; BUILDDIR="${CEBUILD_ROOT:-$HOME/cebuild}"
+# A mode named twice is a mistake whichever one would have won.
+mode() { [ -z "$MODE" ] || [ "$MODE" = "$1" ] || { echo "makeimgce: $MODE and $1 cannot both be given" >&2; exit 1; }; MODE="$1"; }
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version)     [ $# -ge 2 ] || { echo "makeimgce: --version needs current, last, <branch>:last, a branch or a sha" >&2; exit 1; }
+                   VERSION_ARG="$2"; shift 2 ;;
+    --version=*)   VERSION_ARG="${1#*=}"; shift ;;
+    --full)        mode --full; CLEAN=1; shift ;;
+    --incremental) mode --incremental; CLEAN=0; shift ;;
+    --builddir)    [ $# -ge 2 ] || { echo "makeimgce: --builddir needs a directory" >&2; exit 1; }
+                   BUILDDIR="$2"; shift 2 ;;
+    --builddir=*)  BUILDDIR="${1#*=}"; shift ;;
+    --no-build)    mode --no-build; BUILD=0; shift ;;
+    --deploy)      [ $# -ge 2 ] || { echo "makeimgce: --deploy needs a digit or an address" >&2; exit 1; }
+                   DEPLOY="$2"; shift 2 ;;
+    --deploy=*)    DEPLOY="${1#*=}"; shift ;;
+    --wipe-storage) WIPE_STORAGE=1; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    *)             echo "makeimgce: unknown argument '$1' (try --help)" >&2; exit 1 ;;
+  esac
+done
+[ -n "$VERSION_ARG" ] || { echo "makeimgce: --version is required (current, last, <branch>:last, a branch or a sha)" >&2; exit 1; }
+[ -n "$MODE" ] || { echo "makeimgce: name one of --full, --incremental or --no-build (try --help)" >&2; exit 1; }
+
+die() { echo "makeimgce: $*" >&2; exit 1; }
+
+# cebuild and am9usb both read CEBUILD_ROOT, so setting it here is all it
+# takes to move an entire build somewhere else.
+mkdir -p "$BUILDDIR" 2>/dev/null || true
+[ -d "$BUILDDIR" ] || die "--builddir $BUILDDIR does not exist and cannot be created"
+ROOT="$(cd "$BUILDDIR" && pwd)"
+export CEBUILD_ROOT="$ROOT"
+
+# ---- version: current runs here; a commit runs its own makeimgce
+if [ "$VERSION_ARG" = current ]; then
+  [ $BUILD -eq 1 ] || die "--version current is a new version every run, so there is nothing built for it; name a commit with --no-build"
+  # The date, so it is never "already running". am9usb takes AM9_VERSION as
+  # given instead of demanding a clean tree.
+  VERSION="${AM9_VERSION:-current-$(date +%Y%m%d%H%M%S)}"
+  export AM9_VERSION="$VERSION"
+elif [ -z "${MAKEIMGCE_AT:-}" ]; then
+  REPO="$(git -C "$HERE" rev-parse --show-toplevel)"
+  case "$VERSION_ARG" in
+    last)   ref=main ;;
+    *:last) ref="${VERSION_ARG%:last}" ;;
+    *)      ref="$VERSION_ARG" ;;
+  esac
+  sha="$(git -C "$REPO" rev-parse --verify -q "$ref^{commit}")" || die "--version $VERSION_ARG: no such commit or branch ($ref)"
+  [ "$sha" = "$VERSION_ARG" ] || echo "== --version $VERSION_ARG -> $sha"
+  git -C "$REPO" cat-file -e "$sha:makeimgce" 2>/dev/null \
+    || die "$sha has no makeimgce"
+  WT="$ROOT/src/build-$sha"
+  # One worktree at a time: drop the ones earlier versions left behind.
+  for old in "$ROOT"/src/build-*; do
+    [ -d "$old" ] && [ "$old" != "$WT" ] && { git -C "$REPO" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"; }
+  done
+  git -C "$REPO" worktree prune
+  if [ ! -d "$WT" ]; then
+    mkdir -p "$ROOT/src"
+    git -C "$REPO" worktree add -q --detach "$WT" "$sha" || die "cannot check $sha out at $WT"
+  fi
+  [ "$(git -C "$WT" rev-parse HEAD)" = "$sha" ] || die "$WT is not at $sha - remove it ('git worktree remove $WT') and run again"
+  # Same arguments, version now a sha, run by that commit's own makeimgce.
+  NEWARGS=(); skip=0
+  for a in "${ARGS[@]}"; do
+    if [ $skip -eq 1 ]; then NEWARGS+=("$sha"); skip=0; continue; fi
+    case "$a" in
+      --version)   NEWARGS+=("$a"); skip=1 ;;
+      --version=*) NEWARGS+=("--version=$sha") ;;
+      *)           NEWARGS+=("$a") ;;
+    esac
+  done
+  export MAKEIMGCE_AT="$sha"
+  exec "$WT/makeimgce" "${NEWARGS[@]}"
+else
+  [ "$(git -C "$HERE" rev-parse HEAD)" = "$MAKEIMGCE_AT" ] || die "running from $(git -C "$HERE" rev-parse HEAD), not $MAKEIMGCE_AT"
+  # The commit is the version, unless a wrapper stamps its own (AM9_VERSION).
+  VERSION="${AM9_VERSION:-$MAKEIMGCE_AT}"
+  # A worktree of the commit itself: clean, so am9usb's own check agrees.
+  [ "$("$HERE/am9usb" version)" = "$VERSION" ] || die "the worktree at $HERE is not a clean $MAKEIMGCE_AT"
+fi
+
+# Pinned in the repo beside this script: the build directory is disposable,
+# and the build's own device_trees copy has never booted this box.
+DTB="${AM9_DTB_FILE:-$HERE/am9pro-known-good.dtb}"
+LOG="$ROOT/makeimgce.log"
+PIN="$(head -1 "$HERE/PIN" 2>/dev/null | tr -d '[:space:]')"
+
+echo "== checking inputs before doing any work"
+echo "   version : $VERSION"
+echo "   fork    : $PIN (PIN)"
+echo "   builddir: $ROOT"
+[ -f "$DTB" ]  || die "no dtb at $DTB
+        The build's own device_trees copy has never booted this box; the
+        known-good one is pinned in the repo beside this script (or point
+        AM9_DTB_FILE at another)."
+[ -f "$HERE/flash/resolution.ini" ] || die "no flash/resolution.ini beside this script
+        u-boot imports it as env and it sets the early HDMI mode; no CoreELEC
+        build produces it. See README.md."
+echo "   dtb     : $DTB"
+docker info >/dev/null 2>&1 || die "Docker is not running"
+[ $BUILD -eq 0 ] || command -v unsquashfs >/dev/null || die "unsquashfs is not on the PATH (brew install squashfs) - the slot bundle needs it"
+
+sv() { echo "$1" | sed -n "s/^$2=//p" | head -1; }
+if [ -n "$DEPLOY" ]; then
+  # An unreachable box fails now, not after hours of building.
+  STATUS="$("$HERE/am9usb" status "$DEPLOY")" || die "--deploy $DEPLOY: box unreachable - nothing built"
+  echo "   box     : $(sv "$STATUS" BOX) runs $(sv "$STATUS" VERSION) ($(sv "$STATUS" BUILD_ID | cut -c1-12))," \
+       "booted $(sv "$STATUS" SYSTEM_IMAGE), version $(sv "$STATUS" SLOT_VERSION)"
+  case "$(sv "$STATUS" SYSTEM_IMAGE)" in
+    SYSTEM_[AB]) ;;
+    *) die "--deploy $DEPLOY: the box booted a stick without A/B slots - make and write a stick first (no --deploy)" ;;
+  esac
+  if [ "$(sv "$STATUS" SLOT_VERSION)" = "$VERSION" ]; then
+    echo; echo "== $DEPLOY already runs $VERSION - nothing to do"; exit 0
+  fi
+  RUNNING="$(sv "$STATUS" SYSTEM_IMAGE)"; RUNNING="${RUNNING#SYSTEM_}"
+  [ "$RUNNING" = A ] && TARGET=B || TARGET=A
+  echo "   install : into slot $TARGET (running $RUNNING)"
+fi
+
+if [ $BUILD -eq 1 ]; then
+  if [ $CLEAN -eq 1 ]; then echo "   mode    : FULL - build tree wiped, every package rebuilt (~4h)"
+  else                      echo "   mode    : incremental - only what changed is rebuilt"; fi
+fi
+
+echo
+if [ $BUILD -eq 0 ]; then
+  echo "(--no-build: using what is already built for $VERSION)"
+elif [ -n "$DEPLOY" ]; then
+  echo "Builds, then installs on $DEPLOY and reboots it into the new slot."
+else
+  echo "Builds, then hands you the image to write to a stick."
+fi
+
+if [ $BUILD -eq 1 ]; then
+  # A build directory with no volume in it has never been set up. setup is
+  # idempotent but rebuilds the Docker images, so only run it when needed.
+  if [ ! -f "$ROOT/build.img" ]; then
+    echo
+    echo "== $ROOT has no build volume yet; running cebuild setup"
+    "$HERE/cebuild" setup
+  fi
+
+  # The fork commit is PIN at this version; cebuild refuses to build anything else.
+  echo
+  echo "== fork clone -> $PIN"
+  "$HERE/cebuild" update
+
+  if [ $CLEAN -eq 1 ]; then
+    echo
+    echo "== wiping the build tree"
+    "$HERE/cebuild" clean
+  fi
+
+  echo
+  echo "== building (log: $LOG)"
+  date +"   started %H:%M:%S"
+  AM9_DTB_FILE="$DTB" "$HERE/cebuild" stick > "$LOG" 2>&1 || {
+    echo "makeimgce: build FAILED - last lines of $LOG:" >&2
+    grep -E "FAILURE:|\[FAIL\]|^am9usb:" "$LOG" | tail -3 >&2 || tail -5 "$LOG" >&2
+    exit 1
+  }
+  date +"   finished %H:%M:%S"
+fi
+
+if [ -n "$DEPLOY" ]; then
+  bundle="$(ls -t "$ROOT"/target/coreelec_*_"${VERSION}"_aarch64_slot.tar 2>/dev/null | head -1 || true)"
+  [ -n "$bundle" ] || die "no slot bundle for $VERSION in $ROOT/target"
+  echo
+  echo "== installing $(basename "$bundle") on $DEPLOY"
+  if [ -n "$WIPE_STORAGE" ]; then
+    # install --wipe-storage reboots by itself: the wipe stops Kodi and must
+    # not leave the box running on a half-cleared /storage.
+    "$HERE/am9usb" install --wipe-storage "$DEPLOY" "$bundle" || die "install failed - the box still boots slot $RUNNING"
+    echo
+    echo "== /storage cleared; $DEPLOY is rebooting into slot $TARGET"
+  else
+    "$HERE/am9usb" install "$DEPLOY" "$bundle" || die "install failed - the box still boots slot $RUNNING"
+    echo
+    echo "== rebooting $DEPLOY into slot $TARGET"
+    "$HERE/am9usb" reboot "$DEPLOY" || true
+  fi
+  # Wait for it to go away, then to come back with the new slot.
+  for i in $(seq 1 30); do "$HERE/am9usb" status "$DEPLOY" >/dev/null 2>&1 || break; sleep 2; done
+  NEW=""; deadline=$((SECONDS + 300))
+  while [ $SECONDS -lt $deadline ]; do
+    sleep 5
+    NEW="$("$HERE/am9usb" status "$DEPLOY" 2>/dev/null)" && break
+    NEW=""
+  done
+  [ -n "$NEW" ] || die "$DEPLOY did not come back within 5 minutes (slot $TARGET selected; 'am9usb goback $DEPLOY' once it answers, or rewrite slot.ini on the stick)"
+  bad=""
+  [ "$(sv "$NEW" SYSTEM_IMAGE)" = "SYSTEM_$TARGET" ] || bad="$bad booted $(sv "$NEW" SYSTEM_IMAGE), not SYSTEM_$TARGET;"
+  [ "$(sv "$NEW" SLOT_VERSION)" = "$VERSION" ]       || bad="$bad version $(sv "$NEW" SLOT_VERSION), not $VERSION;"
+  [ "$(sv "$NEW" BUILD_ID)" = "$PIN" ]               || bad="$bad BUILD_ID $(sv "$NEW" BUILD_ID), not PIN $PIN;"
+  [ -z "$bad" ] || die "deployed, but the box is not running it:$bad"
+  echo "== VERIFIED: $DEPLOY runs slot $TARGET, version $VERSION, $(sv "$NEW" VERSION)"
+  echo "   'am9usb goback $DEPLOY' + 'am9usb reboot $DEPLOY' returns to slot $RUNNING"
+  exit 0
+fi
+
+# The stick made for VERSION: its bundle names the CoreELEC build.
+bundle="$(ls -t "$ROOT"/target/coreelec_*_"${VERSION}"_aarch64_slot.tar 2>/dev/null | head -1 || true)"
+[ -n "$bundle" ] || die "no slot bundle for $VERSION in $ROOT/target"
+cever="$(tar xOf "$bundle" MANIFEST | sed -n 's/^COREELEC_VERSION=//p')"
+img="$(ls -t "$ROOT"/target/*-"$cever"-am9pro-usb.img.gz 2>/dev/null | head -1 || true)"
+[ -n "$img" ] || die "no *-$cever-am9pro-usb.img.gz in $ROOT/target for $VERSION"
+
+cat <<MSG
+
+== image ready:
+   $img
+
+Write it with balenaEtcher (validation on), or with
+   sudo $HERE/am9usb write /dev/diskN
+which verifies what it wrote. Eject it at once (see README.md), then power
+the box off, swap the stick in, power on.
+MSG

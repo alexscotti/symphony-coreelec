@@ -34,6 +34,8 @@
 #   keep                          paths under /storage, one per line, that
 #                                 wipe-storage keeps (the extension of the
 #                                 slot that boots next is the one read)
+#   status <storage>              key=value lines about itself, which
+#                                 am9usb status prints (the running slot's)
 # /storage/.extra keeps only the two slots' extensions.
 set -u
 
