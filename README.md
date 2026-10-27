@@ -452,7 +452,9 @@ whenever it is plugged in.
 2. Note the box's **IP address**: Settings -> Network & Internet -> your
    connection.
 3. Download the first-boot program from this repository's Releases page
-   and run it:
+   and run it. (These programs have not yet been run against a real box in
+   Android: if one fails, use the manual adb steps below, and please open
+   an issue.)
    - **Mac:** `am9-first-boot.command`. Double-click it. The first time,
      macOS may say it cannot be opened: right-click it, choose **Open**, then
      **Open** again.
