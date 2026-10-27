@@ -648,3 +648,11 @@ internet.
 
 Each component keeps its own licence; the fork's own files are GPL-2.0 or
 later. Amlogic's `dovi.ko` is not distributed.
+
+**Source code.** Every release names the commit of this repository it was
+built from. That commit's `PIN` names the commit of the CoreELEC fork
+([alexscotti/CoreELEC](https://github.com/alexscotti/CoreELEC), branch
+`symphony`), whose `kodi/package.mk` names the commit of the Kodi fork
+([alexscotti/xbmc](https://github.com/alexscotti/xbmc), branch `symphony`).
+Every other package's upstream source is named, with its sha256, by its
+`package.mk` in the CoreELEC fork. Checksums are published unsigned.
