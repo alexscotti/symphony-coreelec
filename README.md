@@ -232,6 +232,9 @@ unchanged.
 - A software-decoded segment (for example an MPEG-2 film after a
   hardware-decoded menu) gets a renderer that can draw it, and its frames
   are released: this was a memory leak that ran the box out of memory.
+- 3D Blu-rays switch the output to frame packing with Kodi's default mode
+  list (no whitelist set up): on a 4K GUI that list used to leave out every
+  1080p frame-packed mode, so 3D played without switching.
 - Kodi's vertical picture shift works with frame-packed 3D: both eyes move
   and the picture keeps its height.
 - The 3D stereo mode is no longer read from a stale cache.
