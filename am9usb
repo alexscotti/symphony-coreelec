@@ -1,0 +1,367 @@
+#!/bin/bash
+# am9usb - turn a cebuild Generic image into a ready-to-boot AM9 Pro USB image:
+# an A/B slot FAT with this build's bundle in slot A, and an empty /storage
+# (or the bundle's optional extension, see AM9_EXTRA_BUILDER). The box's
+# settings, the BD-J JRE and dovi.ko capture are in the image (the fork's
+# symphony-defaults, symphony-jre, symphony-dovi). See README.md.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="${CEBUILD_ROOT:-$HOME/cebuild}"
+DTB="${AM9_DTB:-s6_s905x5_ugoos_am9_pro.dtb}"
+# STORAGE is sized here and never grown on the box (see am9usb-inner.sh).
+# Kodi's databases, Thumbnails, the BD-J cache and the journal live here.
+GROW_MB="${AM9_GROW_MB:-4096}"
+
+usage() {
+  cat <<EOF
+Usage: am9usb <command>
+
+  resolve [box]     print the box's address, or fail
+  status [box]      what the box runs (VERSION, BUILD_ID, kernel + SYSTEM it
+                    booted, the slot's manifest VERSION, both slots); fails if
+                    the box does not answer over ssh
+  bundle [system]   the A/B slot bundle for a build (MANIFEST, kernel, SYSTEM,
+                    am9slot.sh, and extra.tar when AM9_EXTRA_BUILDER is set)
+                    -> $ROOT/target/coreelec_<date>_<version>_aarch64_slot.tar
+                    Default: newest *.system. Refuses on uncommitted changes
+                    in this repository or a build whose BUILD_ID is not PIN.
+  install [--wipe-storage] [box] [bundle]
+                    copy a bundle into the box's OTHER slot, verify it
+                    and select it for the next boot (no reboot). Refuses while
+                    Kodi plays. Default: newest *_slot.tar.
+                    --wipe-storage then clears /storage back to what a freshly
+                    written stick has on it and reboots, so the new image's own
+                    first-boot hooks supply every setting - the only way to
+                    test that without burning a stick. Keeps the slots'
+                    extensions, what they list to keep, and
+                    .cache/services/sshd.conf when SSH needs it.
+  goback [box]      boot the other slot next time (or cancel a pending switch)
+  reboot [box]      reboot the box
+  version           the version a bundle/stick made now would carry: this
+                    repository's commit; fails on uncommitted changes
+  make [img]        build the USB image: the Generic image's FAT turned into
+                    an A/B stick with this build's bundle in slot A. Default:
+                    newest *-Generic.img.gz in $ROOT/target.
+                    Output lands next to the input as *-am9pro-usb.img.gz
+  write <disk> [img]  write an image to a USB stick (needs sudo). Verifies the
+                    target is a removable USB disk first and refuses anything
+                    else. Defaults to the newest *-am9pro-usb.img.gz.
+
+[box] is a digit N (symphony-coreelec-N.local, resolved over mDNS) or an
+address used as-is. Default: 0.
+
+Env: AM9_SSH_PASSWORD (default coreelec)  AM9_DTB  AM9_GROW_MB
+     AM9_DTB_FILE=<file>  put this dtb.img on the stick after writing, instead
+                          of the one from the build (for a dtb the box is
+                          known to boot)
+     AM9_SSH_PROXYCOMMAND=<cmd>  reach the box through an ssh ProxyCommand
+                          (with %h %p), for working off its LAN; the box's
+                          name is then resolved at the far end.
+                          AM9_SSH_TIMEOUT (default 120 with a proxy, else 8)
+     AM9_EXTRA_BUILDER=<program>  give bundles an extension: run as
+                          <program> <out.tar> <box python x.y>, it writes
+                          extra.tar (see am9slot.sh for what one holds)
+     AM9_VERSION=<string> the version to stamp instead of this commit
+EOF
+}
+
+newest() { ls -t $1 2>/dev/null | head -1 || true; }
+
+# cebuild refuses while a build holds the container. Right after "cebuild
+# image" the container can linger for a few seconds during copy-out, which
+# used to turn an automated build->stick run into a hard failure.
+wait_for_container() {
+  local waited=0
+  while docker ps --format '{{.Names}}' 2>/dev/null | grep -qx coreelec-build; do
+    [ $waited -eq 0 ] && echo "== waiting for the build container to finish"
+    sleep 10; waited=$((waited+10))
+    if [ $waited -ge 7200 ]; then echo "am9usb: container still busy after 2h" >&2; exit 1; fi
+  done
+}
+
+# --- Reaching the box ---------------------------------------------------------
+# A digit names the box the way it names itself (symphony-hostname.service):
+# symphony-coreelec-<digit>.local. Directly, the name is resolved HERE, once,
+# so an off or misnamed box fails before anything is copied. Through
+# AM9_SSH_PROXYCOMMAND it is deliberately left unresolved: the proxy resolves
+# it at the far end, which is what makes a .local name work from outside.
+JUMP_OPTS=()
+SSH_TIMEOUT="${AM9_SSH_TIMEOUT:-8}"
+
+# <digit|address> -> sets BOX (and JUMP_OPTS for a proxy). Sets globals rather
+# than printing: a `BOX="$(resolve_box ...)"` would lose JUMP_OPTS in a subshell.
+resolve_box() {
+  local arg="${1:-0}" name ip
+  BOX=
+  case "$arg" in
+    [0-9]) name="symphony-coreelec-$arg.local" ;;
+    *)     name="$arg" ;;
+  esac
+  if [ -n "${AM9_SSH_PROXYCOMMAND:-}" ]; then
+    SSH_TIMEOUT="${AM9_SSH_TIMEOUT:-120}"
+    JUMP_OPTS=(-o "ProxyCommand=$AM9_SSH_PROXYCOMMAND")
+    BOX="$name"
+    return
+  fi
+  ip="$(python3 -c 'import signal,socket,sys; signal.alarm(5); print(socket.getaddrinfo(sys.argv[1], 22, socket.AF_INET)[0][4][0])' "$name" 2>/dev/null)" \
+    || { echo "am9usb: $name does not resolve (box off, or not on this network?)" >&2; exit 1; }
+  BOX="$ip"
+}
+
+STAGE=/storage/.cache/symphony/stage
+
+# The version of everything a slot is made from is this repository's commit:
+# PIN, the dtb, flash/resolution.ini and these scripts all live here. A dirty
+# tree would make that a lie. makeimgce --version current sets AM9_VERSION
+# (current-<date>) and builds the tree as it is; a wrapper may set it too.
+repo_version() {
+  local dirty
+  [ -n "${AM9_VERSION:-}" ] && { echo "$AM9_VERSION"; return 0; }
+  dirty="$(git -C "$HERE" status --porcelain --untracked-files=no)"
+  if [ -n "$dirty" ]; then
+    echo "am9usb: uncommitted changes - this commit would not describe the build. Commit first:" >&2
+    echo "$dirty" | sed 's/^/        /' >&2
+    return 1
+  fi
+  git -C "$HERE" rev-parse HEAD
+}
+
+# make_bundle <path prefix of a build, .../CoreELEC-...-<version>>: prints the bundle path
+make_bundle() {
+  local base="$1" ver pin bid kodi cever w out pyver
+  [ -f "$base.system" ] && [ -f "$base.kernel" ] || { echo "am9usb: no $base.system/.kernel" >&2; return 1; }
+  command -v unsquashfs >/dev/null || { echo "am9usb: unsquashfs is not on the PATH (brew install squashfs)" >&2; return 1; }
+  ver="$(repo_version)" || return 1
+  pin="$(head -1 "$HERE/PIN" | tr -d '[:space:]')"
+  bid="$(unsquashfs -cat "$base.system" etc/os-release | sed -n 's/^BUILD_ID="\(.*\)"/\1/p')"
+  cever="$(unsquashfs -cat "$base.system" etc/os-release | sed -n 's/^VERSION="\(.*\)"/\1/p')"
+  # Our xbmc fork's commit, stamped by the fork's scripts/image (older builds: none)
+  kodi="$(unsquashfs -cat "$base.system" etc/os-release | sed -n 's/^KODI_COMMIT="\(.*\)"/\1/p')"
+  [ "$bid" = "$pin" ] || { echo "am9usb: $(basename "$base") was built from $bid, but PIN ($ver) is $pin" >&2; return 1; }
+  w="$ROOT/.bundle"; rm -rf "$w"; mkdir -p "$w"
+  cp "$base.kernel" "$w/kernel.img"; cp "$base.system" "$w/SYSTEM"
+  # The bundle carries its own installer: the box's web page runs it, so what
+  # installs a slot is always the version that built it.
+  cp "$HERE/am9slot.sh" "$w/am9slot.sh"
+  # The box's Python, read out of the SYSTEM being bundled: an extension with
+  # compiled modules has to be built for exactly this interpreter.
+  pyver="$(unsquashfs -l "$base.system" | sed -n 's|.*/usr/lib/python\(3\.[0-9]*\)$|\1|p' | head -1)"
+  [ -n "$pyver" ] || { echo "am9usb: no /usr/lib/python3.* in $(basename "$base").system" >&2; return 1; }
+  # The optional extension: whatever AM9_EXTRA_BUILDER writes as extra.tar.
+  local files="MANIFEST kernel.img SYSTEM am9slot.sh"
+  if [ -n "${AM9_EXTRA_BUILDER:-}" ]; then
+    "$AM9_EXTRA_BUILDER" "$w/extra.tar" "$pyver" >&2 || { echo "am9usb: $AM9_EXTRA_BUILDER failed" >&2; return 1; }
+    [ -s "$w/extra.tar" ] || { echo "am9usb: $AM9_EXTRA_BUILDER wrote no $w/extra.tar" >&2; return 1; }
+    files="$files extra.tar"
+  fi
+  {
+    echo "VERSION=$ver"
+    echo "BUILD_ID=$bid"
+    [ -z "$kodi" ] || echo "KODI_COMMIT=$kodi"
+    echo "COREELEC_VERSION=$cever"
+    echo "python=$pyver"
+    echo "kernel_sha256=$(shasum -a 256 "$w/kernel.img" | cut -d' ' -f1)"
+    echo "SYSTEM_sha256=$(shasum -a 256 "$w/SYSTEM" | cut -d' ' -f1)"
+    echo "am9slot_sha256=$(shasum -a 256 "$w/am9slot.sh" | cut -d' ' -f1)"
+    [ -f "$w/extra.tar" ] && echo "extra_sha256=$(shasum -a 256 "$w/extra.tar" | cut -d' ' -f1)"
+  } > "$w/MANIFEST"
+  # Not compressed: SYSTEM is squashfs and the kernel is compressed already.
+  # COPYFILE_DISABLE: macOS tar otherwise adds an AppleDouble ._<file> entry
+  # per file (for xattrs like com.apple.provenance), and the box's web
+  # installer rightly refuses a bundle with files it does not expect.
+  out="$ROOT/target/coreelec_${cever##*_}_${ver}_aarch64_slot.tar"
+  COPYFILE_DISABLE=1 tar cf "$out.part" -C "$w" $files || return 1
+  # Listed with Python, not tar: macOS tar folds ._ entries back in and hides them.
+  local names
+  names="$(python3 -c 'import sys, tarfile; print(" ".join(sorted(tarfile.open(sys.argv[1]).getnames())))' "$out.part")"
+  [ "$names" = "$(echo $files | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" ] \
+    || { echo "am9usb: $out.part must hold exactly $files, holds: $names" >&2; return 1; }
+  mv "$out.part" "$out"
+  rm -rf "$w"
+  echo "$out"
+}
+
+# Run am9slot.sh on the box: piped in, never left behind.
+slot() { box "sh -s -- $*" < "$HERE/am9slot.sh"; }
+
+box() {
+  SSHPASS="${AM9_SSH_PASSWORD:-coreelec}" sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout="$SSH_TIMEOUT" \
+    ${JUMP_OPTS[@]+"${JUMP_OPTS[@]}"} "root@$BOX" "$@"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  resolve) resolve_box "${1:-}"; echo "$BOX" ;;
+
+  status)
+    resolve_box "${1:-}"
+    command -v sshpass >/dev/null || { echo "am9usb: sshpass is not on the PATH" >&2; exit 1; }
+    # No BOOT_IMAGE=/SYSTEM_IMAGE= on the cmdline means init's defaults.
+    out="$(box '. /etc/os-release; k=kernel.img; s=SYSTEM
+                for a in $(cat /proc/cmdline); do case $a in
+                  BOOT_IMAGE=*) k=${a#*=};; SYSTEM_IMAGE=*) s=${a#*=};; esac; done
+                echo "VERSION=$VERSION"; echo "BUILD_ID=$BUILD_ID"
+                echo "BOOT_IMAGE=${k#/}"; echo "SYSTEM_IMAGE=${s#/}"
+                case ${s#/} in SYSTEM_[AB]) echo "SLOT_VERSION=$(sed -n "s/^VERSION=//p" /flash/SLOT_${s##*_}.manifest 2>/dev/null)";;
+                  *) echo "SLOT_VERSION=";; esac' 2>/dev/null)" \
+      || { echo "am9usb: $BOX does not answer over ssh" >&2; exit 1; }
+    echo "BOX=$BOX"; echo "$out"
+    slot status
+    # The running slot's extension may say more about itself (its "status").
+    box 'r=; for a in $(cat /proc/cmdline); do case $a in SYSTEM_IMAGE=*SYSTEM_[AB]) r=${a##*_};; esac; done
+         v="$(sed -n "s/^VERSION=//p" /flash/SLOT_$r.manifest 2>/dev/null | head -1)"
+         if [ -n "$v" ] && [ -f "/storage/.extra/$v/status" ]; then sh "/storage/.extra/$v/status" /storage; fi
+         if [ -x /usr/lib/coreelec/symphony-dovi ]; then python3 /usr/lib/coreelec/symphony-dovi status; else echo dovi=; fi' ;;
+
+  bundle)
+    sys="${1:-$(newest "$ROOT/target/*.system")}"
+    [ -f "$sys" ] || { echo "no *.system in $ROOT/target; run 'cebuild image'" >&2; exit 1; }
+    out="$(make_bundle "${sys%.system}")" || exit 1
+    ls -lh "$out"; tar xOf "$out" MANIFEST ;;
+
+  install)
+    WIPE=""
+    case "${1:-}" in --wipe-storage) WIPE=1; shift ;; esac
+    case "${2:-}" in --wipe-storage) WIPE=1; set -- "${1:-}" "${3:-}" ;; esac
+    resolve_box "${1:-}"
+    b="${2:-$(newest "$ROOT/target/*_slot.tar")}"
+    [ -f "$b" ] || { echo "no *_slot.tar in $ROOT/target; run 'am9usb bundle'" >&2; exit 1; }
+    st="$(slot status)" || { echo "am9usb: $BOX does not answer over ssh" >&2; exit 1; }
+    echo "$st" | grep -q '^running=[AB]$' || { echo "am9usb: $BOX booted a stick without A/B slots - re-stick it with am9usb make first" >&2; exit 1; }
+    echo "== $(basename "$b") -> $BOX"
+    tar xOf "$b" MANIFEST | sed 's/^/   /'
+    box "rm -rf $STAGE && mkdir -p $STAGE && tar xf - -C $STAGE" < "$b" \
+      || { box "rm -rf $STAGE" || true; echo "am9usb: copying the bundle to $BOX failed" >&2; exit 1; }
+    # The bundle's own installer when it has one (every bundle since the web
+    # page); older bundles get this checkout's.
+    rc=0
+    if tar tf "$b" | grep -qx am9slot.sh; then box "sh $STAGE/am9slot.sh install $STAGE" || rc=$?
+    else slot install "$STAGE" || rc=$?; fi
+    # --wipe-storage: put /storage back to what a fresh stick has and reboot
+    # into the slot just selected, so the new image's own first-boot hooks
+    # supply every setting instead of finding older files already in place.
+    # Only after a clean install - there is no point wiping into a slot that
+    # did not take. The wipe reboots by itself, deliberately: it stops Kodi
+    # first (so it cannot rewrite guisettings.xml on shutdown) and the box must
+    # not be left running on a half-cleared /storage.
+    if [ $rc -eq 0 ] && [ -n "$WIPE" ]; then
+      echo "== wiping /storage and rebooting into the new slot"
+      box "sh $STAGE/am9slot.sh wipe-storage" || rc=$?
+    else
+      box "rm -rf $STAGE" || true
+    fi
+    exit $rc ;;
+
+  goback)
+    resolve_box "${1:-}"
+    slot goback ;;
+
+  reboot)
+    resolve_box "${1:-}"
+    box 'nohup sh -c "sleep 1; reboot" >/dev/null 2>&1 &' ;;
+
+  version) repo_version ;;
+
+  make)
+    img="${1:-$(newest "$ROOT/target/*-Generic.img.gz")}"
+    [ -f "$img" ]  || { echo "no Generic.img.gz in $ROOT/target; run 'cebuild image'" >&2; exit 1; }
+    case "$img"  in "$ROOT"/*) ;; *) echo "image must live under $ROOT" >&2; exit 1;; esac
+    wait_for_container
+    # The container sees only $ROOT, as /host, so the one /flash file that
+    # comes from this repo is staged there the way the dtb is below. u-boot
+    # imports resolution.ini as env (cfgload_env), which is what sets the
+    # early HDMI mode; no CoreELEC build produces it.
+    mkdir -p "$ROOT/.tmp"
+    cp "$HERE/flash/resolution.ini" "$ROOT/.tmp/resolution.ini"
+    dtbfile=""
+    if [ -n "${AM9_DTB_FILE:-}" ]; then
+      [ -f "$AM9_DTB_FILE" ] || { echo "AM9_DTB_FILE not found: $AM9_DTB_FILE" >&2; exit 1; }
+      mkdir -p "$ROOT/.tmp"; cp "$AM9_DTB_FILE" "$ROOT/.tmp/dtb.img"; dtbfile=/host/.tmp/dtb.img
+      echo "== dtb: $AM9_DTB_FILE (overriding the build's device_trees copy)"
+    fi
+    out="${img%-Generic.img.gz}-am9pro-usb.img.gz"
+    echo "== slot A bundle"
+    bundle="$(make_bundle "${img%-Generic.img.gz}")" || exit 1
+    echo "   $bundle"
+    echo "== image: $img"
+    cp "$HERE/am9usb-inner.sh" "$ROOT/.am9usb-inner.sh"
+    "$HERE/cebuild" run sudo -E bash /host/.am9usb-inner.sh \
+      "/host/${img#$ROOT/}" /host/.tmp/resolution.ini "/host/${out#$ROOT/}" "$DTB" "$GROW_MB" "/host/${bundle#$ROOT/}" "$dtbfile"
+    ( cd "$(dirname "$out")" && shasum -a 256 "$(basename "$out")" > "$(basename "$out").sha256" )
+    ls -lh "$out"
+    # NOT gzcat | dd: a pipe gives dd short reads, nothing verifies the
+    # result, and macOS mounts and indexes the stick the instant the partition
+    # table appears - which can allocate Spotlight metadata over SYSTEM and
+    # looks exactly like a broken build. See README.md.
+    cat <<EOF
+
+Write it with balenaEtcher (validation on), or with this script, which
+verifies what it wrote:
+  sudo $0 write /dev/diskN
+
+Then power the box off, swap the stick in, power on.
+EOF
+    ;;
+  write)
+    disk="${1:-}"; shift || true
+    img="${1:-$(newest "$ROOT/target/*-am9pro-usb.img.gz")}"
+    [ -n "$disk" ] || { echo "usage: am9usb write /dev/diskN [image]" >&2; exit 1; }
+    [ -f "$img" ]  || { echo "no *-am9pro-usb.img.gz in $ROOT/target; run 'am9usb make'" >&2; exit 1; }
+    case "$disk" in /dev/disk[0-9]*) ;; *) echo "expected /dev/diskN, got $disk" >&2; exit 1;; esac
+    rdisk="${disk/\/dev\/disk//dev/rdisk}"
+
+    info="$(diskutil info "$disk" 2>/dev/null)" || { echo "no such disk: $disk" >&2; exit 1; }
+    echo "$info" | grep -qi "Removable Media: *Removable" || { echo "$disk is not removable - refusing" >&2; exit 1; }
+    echo "$info" | grep -qiE "Protocol: *USB"             || { echo "$disk is not USB - refusing" >&2; exit 1; }
+    echo "$info" | grep -qi "Whole: *Yes"                 || { echo "$disk is not a whole disk - refusing" >&2; exit 1; }
+    name=$(echo "$info" | sed -n 's/ *Device \/ Media Name: *//p' | head -1)
+    echo "== target: $disk  $name  (removable USB)"
+    echo "== image:  $(basename "$img")"
+    [ "$(id -u)" -eq 0 ] || { echo "am9usb write needs root: sudo $0 write $disk" >&2; exit 1; }
+
+    # macOS must not index this stick. Its FAT driver writes .Spotlight-V100
+    # and .fseventsd into whatever it mounts, and allocates that metadata over
+    # clusters already belonging to SYSTEM - measured: SYSTEM stopped matching
+    # its own SYSTEM.md5, CoreELEC's initramfs refused to boot, and the box
+    # hung on the bootloader logo with no display and no network.
+    #
+    # So: unmount immediately after writing so the indexer never gets a
+    # window, and verify, because an unverified write looks exactly like a
+    # bad build.
+    # Same approach here rather than /etc/fstab noauto, which would suppress
+    # mounting for every volume with these labels, forever, system-wide.
+
+    raw="$ROOT/.write.img"
+    echo "== decompressing (a pipe into dd gives short reads; use a file)"
+    gzcat "$img" > "$raw"
+    size=$(stat -f%z "$raw"); imd5=$(md5 -q "$raw")
+    echo "   $size bytes, md5 $imd5"
+
+    diskutil unmountDisk "$disk" >/dev/null 2>&1 || true
+    echo "== writing"
+    date +"   started  %H:%M:%S"
+    dd if="$raw" of="$rdisk" bs=4m
+    sync
+    date +"   finished %H:%M:%S"
+
+    # Unmount FIRST and immediately - before macOS can index anything - then
+    # verify off the raw device.
+    diskutil unmountDisk force "$disk" >/dev/null 2>&1 || true
+    echo "== verifying the device against the image"
+    sleep 2
+    diskutil unmountDisk force "$disk" >/dev/null 2>&1 || true
+    dmd5=$(dd if="$rdisk" bs=4m count=$(( (size + 4194303) / 4194304 )) 2>/dev/null | head -c "$size" | md5 -q)
+    rm -f "$raw"
+    if [ "$imd5" = "$dmd5" ]; then
+      echo "== VERIFIED - stick matches the image byte for byte"
+      echo "   power the box off, swap the stick in, power on"
+    else
+      echo "== MISMATCH - device $dmd5 != image $imd5" >&2
+      echo "   do NOT boot this stick" >&2
+      exit 1
+    fi
+    ;;
+  *) usage; exit 1 ;;
+esac
