@@ -458,8 +458,8 @@ whenever it is plugged in.
    - **Mac:** `am9-first-boot.command`. Double-click it. The first time,
      macOS may say it cannot be opened: right-click it, choose **Open**, then
      **Open** again.
-   - **Windows:** `AM9 First Boot.cmd` and `am9-first-boot.ps1`, in the same
-     folder. Double-click `AM9 First Boot.cmd`. If Windows says "Windows
+   - **Windows:** `am9-first-boot.cmd` and `am9-first-boot.ps1`, in the same
+     folder. Double-click `am9-first-boot.cmd`. If Windows says "Windows
      protected your PC", choose **More info**, then **Run anyway**.
 4. Type the IP address when asked. The program downloads Google's `adb`
    (once), connects to the box, and checks it is an AM9 Pro on firmware

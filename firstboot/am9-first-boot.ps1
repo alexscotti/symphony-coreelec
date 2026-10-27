@@ -1,6 +1,6 @@
 # am9-first-boot.ps1 - the one-time switch of a Ugoos AM9 Pro from Android
 # to the Symphony CoreELEC stick, from Windows. Run it with
-# "AM9 First Boot.cmd" beside it (double-click), which starts PowerShell
+# am9-first-boot.cmd beside it (double-click), which starts PowerShell
 # without changing the system's script policy.
 #
 # The box's bootloader looks on USB for the stick's aml_autoscript only when
