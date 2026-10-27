@@ -363,9 +363,12 @@ From this repository's **Releases** page, download:
 
 | file | what |
 |---|---|
-| `...-am9pro-usb.img.gz` | the stick image, for the first install |
+| `...-am9pro-usb.img.gz` | the system image: written to a stick for the first install, uploaded to the box for every update after it |
 | `...-am9pro-usb.img.gz.sha256` | its checksum |
-| `coreelec_<date>_<version>_aarch64_slot.tar` (+ `.sha256`) | the same system as a slot bundle, for updating a box that is already running this build (see "Updating") |
+
+(Release 2026.10.27 also had a `coreelec_..._slot.tar`. A box running
+2026.10.27 updates from that kind of file only, so the release after it
+carries one too; from then on the image is all there is.)
 
 Check the download:
 
@@ -510,10 +513,10 @@ Updates go over the network and never touch the running system. The stick
 holds two complete systems, slot A and slot B; the first install fills slot
 A.
 
-1. Download the new release's `..._slot.tar`, or its stick image
-   `...-am9pro-usb.img.gz`: the page takes either (from an image it installs
-   the system inside it; the bundle is the same system, without the rest of
-   the stick).
+1. Download the new release's `...-am9pro-usb.img.gz`, the same file a first
+   install writes to a stick: the page installs the system inside it. (It
+   also takes a `coreelec_..._slot.tar` slot bundle, the same system without
+   the rest of the stick; a box on 2026.10.27 takes only that.)
 2. Open `http://symphony-coreelec-0.local/host_management`. It shows both
    slots, which one is running, and the CoreELEC and Kodi commits each was
    built from.
@@ -569,7 +572,7 @@ Output, in the build directory's `target/`:
 | file | use |
 |---|---|
 | `*-am9pro-usb.img.gz` | a ready-to-boot USB stick: slot A filled, our device tree, an empty `/storage` |
-| `coreelec_<date>_<version>_aarch64_slot.tar` | a slot bundle, for the Host Management page or `am9usb install` |
+| `coreelec_<date>_<version>_aarch64_slot.tar` | a slot bundle: slot A of the stick image as its own file, for `am9usb install` (the Host Management page takes the image as well) |
 | `*-Generic.img.gz` | CoreELEC's bare Generic image, as upstream publishes it |
 
 After every build, `tests/verify_image.sh` checks what can be checked
