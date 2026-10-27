@@ -1,0 +1,443 @@
+#!/bin/bash
+# cebuild - build our CoreELEC fork (official CoreELEC + SamuriHL's changes +
+# ours; AM9 Pro, Amlogic-no/aarch64) from source on a Mac, inside Docker. See README.md next to this file.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# Where the build volume (~120 GB), sources and output live.
+ROOT="${CEBUILD_ROOT:-$HOME/cebuild}"
+IMG="$ROOT/build.img"
+# Inside the container, on the PERSISTENT build volume. It used to be
+# /tmp/cebuild-build.log, but in_container is "docker run --rm" - a new,
+# throwaway container per command - so the log was destroyed with the
+# container that wrote it and the failed-package extraction below always
+# read an empty fresh /tmp. It therefore never cleared anything, and a
+# failed build left a half-built package for the next run to trip over:
+# a killed kodi link reappeared as hundreds of undefined references in
+# unrelated subsystems on the retry (2026-10-18).
+BUILD_LOG=/build/cebuild-build.log
+IMG_SIZE="${CEBUILD_SIZE:-250G}"
+# We build our OWN fork, always - carrying something or not. A change to this
+# tree is then an ordinary commit on 'symphony' instead of a patch file
+# describing a patch file. Since 2026-09-30 the fork sits on OFFICIAL CoreELEC
+# with SamuriHL's commits replayed on top; the SamuriHL-based fork
+# (alexscotti/CoreELEC) was deleted on 2026-10-01.
+REPO="${CEBUILD_REPO:-git@github.com:alexscotti/CoreELEC.git}"
+BRANCH="${CEBUILD_BRANCH:-symphony}"
+# The same repo over HTTPS, which is how the container reads it. The container
+# has no GitHub key and no known_hosts, so an SSH fetch in there fails with
+# "Host key verification failed"; the fork is public, so reading it over HTTPS
+# needs neither. Nothing is ever pushed from the container - see "push".
+REPO_FETCH="${CEBUILD_REPO_FETCH:-https://github.com/alexscotti/CoreELEC.git}"
+# Run in the clone before anything that fetches: a clone made before REPO_FETCH
+# existed still has the SSH url as its origin.
+ORIGIN_SH="git remote set-url origin '$REPO_FETCH' && git remote set-url --push origin '$REPO'"
+# Where 'symphony' is rebased FROM. Never built directly.
+UPSTREAM="${CEBUILD_UPSTREAM:-https://github.com/CoreELEC/CoreELEC.git}"
+UPSTREAM_BRANCH="${CEBUILD_UPSTREAM_BRANCH:-coreelec-22}"
+NAME=coreelec-build
+# The upstream ref (release tag or sha) every build comes from. Checked in, so
+# the repo alone says which source an image was built from.
+PIN_FILE="$HERE/PIN"
+PIN="$(head -1 "$PIN_FILE" 2>/dev/null | tr -d '[:space:]')"
+# The UPSTREAM ref our commits sit on. PIN says which of OUR commits to build;
+# this says what it is based on, which is the one thing a rebase cannot work out
+# for itself when upstream rewrites history (SamuriHL did; official CoreELEC
+# merges, but the record costs nothing and keeps 'rebase' honest).
+BASE_FILE="$HERE/UPSTREAM_BASE"
+BASE="$(head -1 "$BASE_FILE" 2>/dev/null | tr -d '[:space:]')"
+DOCKER_IMAGE=coreelec-mac
+
+# Kodi reports this as "CoreELEC (<name>): ..." (System Information, and
+# System.OSVersionInfo). The player.coreelec driver keys its capability table
+# on that token, so a different name must be added to its _BUILD_TRAITS too.
+BUILDER_NAME="${BUILDER_NAME:-symphony}"
+
+# The fork's SYMPHONY_THEATER option: no (the default) = the public Symphony
+# build; yes adds the author's own theater packages (a skin and that rig's
+# settings) and is of no use anywhere else.
+SYMPHONY_THEATER="${SYMPHONY_THEATER:-no}"
+
+BUILD_ENV=(
+  -e PROJECT=Amlogic-ce -e DEVICE=Amlogic-no -e ARCH=aarch64
+  -e BUILDER_NAME="$BUILDER_NAME"
+  -e SYMPHONY_THEATER="$SYMPHONY_THEATER"
+  # the build log's path, so both the build and the failure read the same one
+  -e BUILD_LOG="$BUILD_LOG"
+)
+# The container has no git identity of its own, so anything that COMMITS in
+# there (rebase) dies with "Committer identity unknown". Carry the Mac's in.
+GIT_NAME="$(git -C "$HERE" config user.name 2>/dev/null || true)"
+GIT_EMAIL="$(git -C "$HERE" config user.email 2>/dev/null || true)"
+# user.name is often unset locally; take it from what this repo has been
+# committing as, so the fork's history stays consistent with it.
+[ -n "$GIT_NAME" ] || GIT_NAME="$(git -C "$HERE" log -1 --format=%an 2>/dev/null || true)"
+[ -n "$GIT_EMAIL" ] || GIT_EMAIL="$(git -C "$HERE" log -1 --format=%ae 2>/dev/null || true)"
+if [ -n "$GIT_NAME" ] && [ -n "$GIT_EMAIL" ]; then
+  BUILD_ENV+=(
+    -e GIT_AUTHOR_NAME="$GIT_NAME"    -e GIT_AUTHOR_EMAIL="$GIT_EMAIL"
+    -e GIT_COMMITTER_NAME="$GIT_NAME" -e GIT_COMMITTER_EMAIL="$GIT_EMAIL"
+  )
+fi
+[ -n "${CEBUILD_NOPIN:-}" ] && BUILD_ENV+=(-e CEBUILD_NOPIN=1)
+[ -n "${CUSTOM_VERSION:-}" ] && BUILD_ENV+=(-e CUSTOM_VERSION="$CUSTOM_VERSION")
+[ -n "${CONCURRENCY_MAKE_LEVEL:-}" ] && BUILD_ENV+=(-e CONCURRENCY_MAKE_LEVEL="$CONCURRENCY_MAKE_LEVEL")
+
+usage() {
+  cat <<EOF
+Usage: cebuild <command>
+
+  setup            build the Docker image, create $IMG, clone the fork
+  image            make image  (full build; output copied to $ROOT/target)
+  clean            delete the build tree so the next build is from scratch
+  stick            image, then am9usb make: source tree -> writable USB image
+                   in one go. Write it with: sudo am9usb write /dev/diskN
+  make <args>      run make <args> in the source tree
+  pkg <script> <p> run scripts/<script> <p>   e.g. cebuild pkg clean kodi
+  fetch <pkg> <url> hand-fetch a source archive when its mirrors 404 (sha256 verified)
+  update           check the clone out at PIN ($PIN)
+  update <ref>     move to a ref on our fork AND write it to PIN (commit PIN after)
+  rebase <ref>     move OUR commits onto an upstream CoreELEC ref (uses UPSTREAM_BASE)
+  push             publish the branch to $REPO (force-with-lease, via $ROOT/ce-push)
+  update latest    same, for the newest commit on $BRANCH (its tag if it has one)
+  shell            interactive shell in the source tree (joins a running build)
+  run <cmd...>     run an arbitrary command in the source tree
+  stop             interrupt a running build, recording what it was mid-way through
+  docker-image     rebuild only the Docker image
+  status           show image size, checkout, running container
+
+Files: PIN (our commit to build), UPSTREAM_BASE (what it sits on)
+
+Env: CEBUILD_ROOT CEBUILD_SIZE CEBUILD_REPO CEBUILD_REPO_FETCH CEBUILD_BRANCH BUILDER_NAME
+     CEBUILD_UPSTREAM CEBUILD_UPSTREAM_BRANCH CUSTOM_VERSION CONCURRENCY_MAKE_LEVEL
+EOF
+}
+
+running() { [ -n "$(docker ps -q -f name="^${NAME}$")" ]; }
+
+# Clear one package so the next build starts it from scratch.
+#
+# Packages are built in-tree and completion is recorded by a stamp file; there is
+# no atomic "built" state. A package interrupted mid-compile leaves a half-built
+# directory, and the next run resumes inside it and fails with an error that
+# points somewhere else entirely - a truncated object reported as a link error in
+# binutils, a half-configured tree reported as "unrecognized option --srcdir" in
+# gcc. Deleting the directory and its stamps is the only reliable fix.
+clear_pkg() {
+  local pkg="${1%%:*}"
+  [ -n "$pkg" ] || return 0
+  in_container bash -c '
+    cd /build/CoreELEC || exit 0
+    for b in build.*; do
+      [ -d "$b" ] || continue
+      rm -rf "$b"/build/"$1"-* "$b"/.stamps/"$1"
+    done
+    echo "cebuild: cleared $1 (build tree and stamps)"' _ "$pkg"
+}
+
+
+
+# Only ONE container may ever mount build.img; the fixed --name enforces it.
+in_container() {
+  local tty=()
+  [ -t 0 ] && [ -t 1 ] && tty=(-it)
+  if running; then
+    echo "cebuild: container '$NAME' is already running (a build?). Use 'cebuild shell' to join it." >&2
+    exit 1
+  fi
+  docker run --rm --privileged --name "$NAME" ${tty[@]+"${tty[@]}"} \
+    -v "$ROOT":/host "${BUILD_ENV[@]}" "$DOCKER_IMAGE" "$@"
+}
+
+docker_image() {
+  # From OUR fork: $BRANCH is a branch of ours, and upstream has no branch of
+  # that name, so asking its repo for it is a 404.
+  local raw="${REPO_FETCH%.git}"; raw="${raw/github.com/raw.githubusercontent.com}"
+  echo "== building coreelec-noble from the fork's tools/docker/noble"
+  curl -fsSL "$raw/$BRANCH/tools/docker/noble/Dockerfile" \
+    | docker build --pull -t coreelec-noble -
+  echo "== building $DOCKER_IMAGE"
+  docker build -t "$DOCKER_IMAGE" "$HERE"
+}
+
+# MOVE, not copy: the build volume's target/ is only staging. Copied, every
+# build's images (then ~10 Amlogic boards each) stayed in the 250G volume too, and
+# on 2026-10-01 they reached 162G and a full build died writing its images with
+# "No space left on device". am9usb reads $ROOT/target, the host side.
+copy_out() {
+  in_container bash -c 'mkdir -p /host/target && sudo rsync -a --remove-source-files --info=name /build/CoreELEC/target/ /host/target/ && sudo find /build/CoreELEC/target -mindepth 1 -type d -empty -delete' || true
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  setup)
+    mkdir -p "$ROOT"
+    docker_image
+    if [ ! -f "$IMG" ]; then
+      echo "== creating sparse $IMG_SIZE ext4 image at $IMG"
+      truncate -s "$IMG_SIZE" "$IMG" 2>/dev/null || mkfile -n "$(echo "$IMG_SIZE" | tr 'A-Z' 'a-z')" "$IMG"
+      docker run --rm -v "$ROOT":/host --entrypoint mkfs.ext4 "$DOCKER_IMAGE" \
+        -q -F -m 0 -L coreelec -E lazy_itable_init=1,lazy_journal_init=1 /host/build.img
+    fi
+    in_container bash -c "[ -d /build/CoreELEC/.git ] || git clone -b '$BRANCH' '$REPO_FETCH' /build/CoreELEC"
+    in_container bash -c "git remote add upstream '$UPSTREAM' 2>/dev/null || git remote set-url upstream '$UPSTREAM'"
+    in_container bash -c "$ORIGIN_SH && git fetch -q --tags origin && git checkout -q '$PIN' && git log -1 --format='checkout: %h %s'"
+    ;;
+  docker-image) docker_image ;;
+  clean)
+    # Deleting the build tree does not need a fresh container, and refusing
+    # just because one is up is wrong when it is idle (a leftover shell, a
+    # diagnostic session). Refuse only when a build is actually in flight.
+    CLEAN_SH='cd /build/CoreELEC && du -sh build.* 2>/dev/null; rm -rf build.*; echo "build tree removed, compiler cache with it (it lives in the tree); downloaded sources kept"'
+    if running; then
+      if docker exec "$NAME" bash -c 'pgrep -f "scripts/build|make image" >/dev/null 2>&1'; then
+        echo "cebuild: a build is running in '$NAME' - stop it before cleaning" >&2
+        exit 1
+      fi
+      echo "== container '$NAME' is idle; cleaning inside it"
+      docker exec "$NAME" bash -c "$CLEAN_SH"
+    else
+      in_container bash -c "$CLEAN_SH"
+    fi ;;
+  stick)
+    # One command from source tree to a stick image. The two halves used to be
+    # run by hand, which is where the container-still-running race bit;
+    # am9usb guards it now.
+    "$0" image || exit $?
+    img="$(ls -t "$ROOT"/target/*-Generic.img.gz 2>/dev/null | head -1)"
+    [ -n "$img" ] || { echo "cebuild: no Generic image in $ROOT/target" >&2; exit 1; }
+    echo "== am9usb make $(basename "$img")"
+    exec "$HERE/am9usb" make "$img" "$@" ;;
+  image)
+    rc=0
+    # Anything a previous "cebuild stop" caught mid-compile is unbuildable now.
+    if [ -s "$ROOT/.interrupted" ]; then
+      echo "== discarding packages interrupted by the last stop:"
+      while read -r p; do [ -n "$p" ] && clear_pkg "$p"; done < "$ROOT/.interrupted"
+      rm -f "$ROOT/.interrupted"
+    fi
+    in_container bash -c '
+      pin="$1"; shift
+      if [ -z "${CEBUILD_NOPIN:-}" ] && [ "$(git rev-parse HEAD)" != "$(git rev-parse "$pin^{commit}" 2>/dev/null)" ]; then
+        echo "cebuild: clone is at $(git describe --tags --always), PIN says $pin." >&2
+        echo "         run \"cebuild update\" to match PIN, \"cebuild update <ref>\" to move PIN," >&2
+        echo "         or set CEBUILD_NOPIN=1 to build the checkout as it is." >&2
+        exit 3
+      fi
+      make image "$@" 2>&1 | tee "$BUILD_LOG"
+      exit ${PIPESTATUS[0]}' _ "$PIN" "$@" || rc=$?
+    if [ $rc -ne 0 ] && [ $rc -ne 3 ]; then
+      # The build system names what died: "FAILURE: scripts/build gcc:bootstrap".
+      # Clear it so a re-run is a real retry rather than a resume into a
+      # half-built tree, which is what made two restarts today fail on errors
+      # that had nothing to do with the change being built.
+      # Reads $BUILD_LOG, which is on the persistent volume - see its
+      # definition for why /tmp could never work. Stripping the colour escapes
+      # is only hardening: the build system prints this line as
+      # "\033[1;31mFAILURE: scripts/install kodi:target has failed!\033[0m" and
+      # the plain sed does match through them, but the escapes sit right where
+      # the package name is captured, so leave nothing to chance.
+      failed="$(in_container bash -c "
+        sed -e 's/\x1b\[[0-9;]*m//g' \"\$BUILD_LOG\" 2>/dev/null \
+          | sed -n 's|.*FAILURE: scripts/[a-z]* \\([^ ]*\\).*|\\1|p' | tail -1" | tr -d '[:space:]')"
+      if [ -n "$failed" ]; then
+        echo "== build failed in $failed; clearing it so the next run restarts it cleanly"
+        clear_pkg "$failed"
+      else
+        echo "== build failed and no package was named; nothing cleared" >&2
+      fi
+    fi
+    [ $rc -eq 3 ] || copy_out
+    exit $rc ;;
+  make)   in_container make "$@" ;;
+  pkg)    s="$1"; shift; in_container "scripts/$s" "$@" ;;
+  run)    in_container "$@" ;;
+  stop)
+    # Interrupt a build and record what it was in the middle of. Looking for
+    # that afterwards does not work: by the time anyone checks, the damaged
+    # package's files are minutes old and indistinguishable from finished ones.
+    # An active compile writes constantly, so a 2-minute window taken NOW is a
+    # sound reading, and it is taken before the container is stopped.
+    if ! running; then
+      echo "cebuild: no build running"
+      rm -f "$ROOT/.interrupted"
+      exit 0
+    fi
+    docker exec "$NAME" bash -c '
+      cd /build/CoreELEC || exit 0
+      for b in build.*; do
+        [ -d "$b" ] || continue
+        find "$b"/build -maxdepth 1 -mindepth 1 -type d -newermt "-2 minutes" 2>/dev/null |
+          sed "s|.*/||"
+      done' 2>/dev/null | sed "s/-[0-9].*$//" | sort -u > "$ROOT/.interrupted" || true
+    if [ -s "$ROOT/.interrupted" ]; then
+      echo "== interrupted mid-build (will be discarded on the next build):"
+      sed "s/^/   /" "$ROOT/.interrupted"
+    else
+      echo "== nothing was mid-build; next build can reuse everything"
+      rm -f "$ROOT/.interrupted"
+    fi
+    docker stop "$NAME" >/dev/null 2>&1 && echo "== stopped"
+    ;;
+  push)
+    # The repo lives inside build.img, and the container has no GitHub key, so
+    # the push goes through a clone on the Mac. Everything here is mechanical;
+    # it exists so that publishing a rebase is one command instead of six.
+    [ -n "$BASE" ] || { echo "cebuild: $BASE_FILE is empty" >&2; exit 1; }
+    clone="$ROOT/ce-push"
+    bundle="$ROOT/.push.bundle"
+    # The bundle below is $BASE..$BRANCH, so a commit that is not ON $BRANCH is
+    # not in it - and the push then succeeds having sent nothing, while the
+    # closing line reports the sha the remote already had. That reads exactly
+    # like a successful push of your work. It happens easily: "cebuild update"
+    # and makeimgce both check the clone out AT PIN, which is a detached HEAD,
+    # so anything committed after a build lands on no branch at all.
+    #
+    # So: if HEAD is ahead of $BRANCH, move $BRANCH up to it and say so. If it
+    # has diverged, stop - that needs a human.
+    head="$(in_container bash -c 'git rev-parse HEAD' | tr -d '[:space:]')"
+    tip="$(in_container bash -c "git rev-parse -q --verify '$BRANCH' || true" | tr -d '[:space:]')"
+    if [ -n "$head" ] && [ -n "$tip" ] && [ "$head" != "$tip" ]; then
+      if in_container bash -c "git merge-base --is-ancestor '$tip' '$head'"; then
+        echo "== HEAD ($(echo "$head" | cut -c1-12)) is ahead of $BRANCH ($(echo "$tip" | cut -c1-12)); moving the branch up"
+        in_container bash -c "git branch -f '$BRANCH' '$head'"
+      else
+        echo "cebuild: HEAD $(echo "$head" | cut -c1-12) is not on $BRANCH ($(echo "$tip" | cut -c1-12)) and is not ahead of it." >&2
+        echo "         Nothing would be pushed. Sort the clone out first:" >&2
+        echo "         cebuild run git log --oneline --graph --all -15" >&2
+        exit 1
+      fi
+    fi
+    if [ ! -d "$clone/.git" ]; then
+      echo "== cloning $REPO for pushing (once)"
+      git clone -q --depth 1 -b "$BRANCH" "$REPO" "$clone"
+    fi
+    rm -f "$bundle"
+    in_container bash -c 'git bundle create "$1" "$2".."$3"' _ \
+      "/host/${bundle#$ROOT/}" "$BASE" "$BRANCH"
+    git -C "$clone" remote add upstream "$UPSTREAM" 2>/dev/null || \
+      git -C "$clone" remote set-url upstream "$UPSTREAM"
+    # the bundle is incremental, so its base commit has to be present locally
+    if ! git -C "$clone" rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
+      echo "== fetching the base $BASE from upstream"
+      git -C "$clone" fetch -q --no-tags upstream "$BASE" 2>/dev/null || \
+        git -C "$clone" fetch -q --tags upstream
+    fi
+    git -C "$clone" fetch -q "$bundle" "$BRANCH:pushing"
+    remote="$(git -C "$clone" ls-remote origin "$BRANCH" | cut -f1)"
+    # --force-with-lease against what the remote actually has: a rebase rewrites
+    # the branch, and a bare --force would clobber anything pushed meanwhile.
+    if [ -n "$remote" ]; then
+      git -C "$clone" push --force-with-lease="refs/heads/$BRANCH:$remote" origin "pushing:$BRANCH"
+    else
+      git -C "$clone" push origin "pushing:$BRANCH"
+    fi
+    git -C "$clone" branch -D pushing >/dev/null 2>&1 || true
+    rm -f "$bundle"
+    now="$(git -C "$clone" ls-remote origin "$BRANCH" | cut -f1)"
+    # The push came from $clone, so only ITS refs/remotes/origin moved. The
+    # clone in the container - the one every other command and "git status"
+    # there reads - still believes whatever it last fetched, which is why it
+    # claimed to be "ahead 2" of a remote that already had the work. It has no
+    # credentials to fetch for itself, and does not need them: we know the sha
+    # that is now on the remote, so just write it.
+    [ -z "$now" ] || in_container bash -c "git update-ref 'refs/remotes/origin/$BRANCH' '$now'"
+    if [ -n "$head" ] && [ -n "$now" ] && [ "$head" != "$now" ]; then
+      echo "cebuild: pushed, but the remote is at $(echo "$now" | cut -c1-12) and HEAD is $(echo "$head" | cut -c1-12)" >&2
+      exit 1
+    fi
+    echo "pushed $BRANCH -> $(echo "$now" | cut -c1-12)"
+    ;;
+  fetch)
+    # The build's downloader gives up when the primary URL and both distro
+    # mirrors fail. Drop the archive where it looks, with the stamps it wants;
+    # the sha256 is still checked against the package.mk.
+    in_container bash -c '
+      set -e; pkg="$1"; url="$2"; f="sources/$pkg/$(basename "$url")"
+      mk=$(find packages projects/Amlogic-ce -path "*/$pkg/package.mk" | head -1)
+      want=$(sed -n "s/^PKG_SHA256=\"\(.*\)\"/\1/p" "$mk" | head -1)
+      mkdir -p "sources/$pkg"; curl -fL --retry 3 -o "$f" "$url"
+      got=$(sha256sum "$f" | cut -d" " -f1)
+      if [ -n "$want" ] && [ "$got" != "$want" ]; then echo "sha256 mismatch: got $got want $want" >&2; rm -f "$f"; exit 1; fi
+      echo "$url" > "$f.url"; echo "$got" > "$f.sha256"; echo "ok $f $got"' _ "$1" "$2"
+    ;;
+  update)
+    ref="${1:-$PIN}"
+    [ "$ref" = latest ] && ref="origin/$BRANCH"
+    # Resolve to a release tag when one points at the commit, else the full
+    # sha - a branch name would not pin anything.
+    got="$(in_container bash -c "$ORIGIN_SH"' || exit 1
+      git fetch -q --tags origin && git checkout -q "$1" || exit 1
+      # the clone predates the fork switch: bring the local branch along whenever
+      # it has no commits of its own to lose
+      b='"$BRANCH"'; if [ "$(git rev-list --count origin/$b..$b 2>/dev/null)" = 0 ]; then git branch -q -f "$b" "origin/$b"; fi
+      t=$(git tag --points-at HEAD | sort | tail -1); echo "RESOLVED ${t:-$(git rev-parse HEAD)}"
+      git log -1 --format="checkout: %h %ad %s"
+      ' _ "$ref")"
+    echo "$got" | grep -v '^RESOLVED'
+    new="$(echo "$got" | sed -n 's/^RESOLVED //p' | tr -d '[:space:]')"
+    [ -n "$new" ] || { echo "cebuild: could not check out $ref" >&2; exit 1; }
+    if [ "$new" != "$PIN" ]; then
+      echo "$new" > "$PIN_FILE"
+      echo "PIN: $PIN -> $new   (commit tools/coreelec-build/PIN)"
+    fi
+    ;;
+  rebase)
+    # Move OUR commits onto a new upstream CoreELEC ref. Stops on a conflict with
+    # the tree left mid-rebase, which is where it should be resolved.
+    up="${1:-}"
+    [ -n "$up" ] || { echo "usage: cebuild rebase <upstream tag|sha|latest>" >&2; exit 1; }
+    [ -n "$BASE" ] || { echo "cebuild: $BASE_FILE is empty - it must name the upstream ref the branch currently sits on" >&2; exit 1; }
+    in_container bash -c '
+      set -e
+      git remote add upstream "$2" 2>/dev/null || git remote set-url upstream "$2"
+      git fetch -q --tags upstream
+      ref="$1"; [ "$ref" = latest ] && ref="upstream/$3"
+      base="$4"
+      git rev-parse -q --verify "$base^{commit}" >/dev/null || {
+        echo "cebuild: recorded base $base is not in this clone" >&2; exit 1; }
+      # A plain "git rebase <ref>" is only right when the current base is an
+      # ancestor of <ref>. It is not, whenever upstream rewrote history: then
+      # rebase replays his orphaned commits as well as ours. Refuse instead of
+      # silently doing that.
+      if ! git merge-base --is-ancestor "$base" "$ref"; then
+        echo "cebuild: recorded base $base is NOT an ancestor of $ref." >&2
+        echo "         Upstream rewrote history; pick the new base by hand and" >&2
+        echo "         write it to UPSTREAM_BASE before rebasing." >&2
+        exit 1
+      fi
+      n=$(git rev-list --count "$base"..'"$BRANCH"')
+      echo "== moving $n commit(s) from $base onto $ref"
+      git log --format="   %h %an  %s" "$base"..'"$BRANCH"'
+      git checkout -q "'"$BRANCH"'"
+      git rebase --onto "$ref" "$base"
+      echo
+      git log --oneline "$ref"..HEAD
+      echo
+      echo "rebased onto $ref"
+      ' _ "$up" "$UPSTREAM" "$UPSTREAM_BRANCH" "$BASE"
+    # Only reached when the rebase finished; a conflict exits non-zero above and
+    # leaves the recorded base alone, matching the tree.
+    newbase="$(in_container bash -c 'git rev-parse "$1^{commit}"' _ "$up" | tr -d '[:space:]')"
+    echo "$newbase" > "$BASE_FILE"
+    echo "UPSTREAM_BASE -> $newbase ($up)"
+    echo "now: cebuild update latest && cebuild push   (then commit PIN + UPSTREAM_BASE)"
+    ;;
+  shell)
+    if running; then
+      docker exec -it -u docker -w /build/CoreELEC \
+        -e PROJECT=Amlogic-ce -e DEVICE=Amlogic-no -e ARCH=aarch64 -e BUILDER_NAME="$BUILDER_NAME" \
+        "$NAME" bash -l
+    else
+      in_container
+    fi
+    ;;
+  status)
+    echo "PIN: $PIN"
+    ls -lh "$IMG" 2>/dev/null && du -h "$IMG" | awk '{print "actual on disk: "$1}'
+    running && echo "container: RUNNING" || echo "container: not running"
+    running || in_container bash -c 'git log -1 --format="checkout: %h %ad %s"; df -h /build | tail -1'
+    ls -lh "$ROOT/target" 2>/dev/null || true
+    ;;
+  *) usage; exit 1 ;;
+esac
