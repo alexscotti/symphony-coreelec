@@ -366,9 +366,10 @@ From this repository's **Releases** page, download:
 | `...-am9pro-usb.img.gz` | the system image: written to a stick for the first install, uploaded to the box for every update after it |
 | `...-am9pro-usb.img.gz.sha256` | its checksum |
 
-(Release 2026.10.27 also had a `coreelec_..._slot.tar`. A box running
-2026.10.27 updates from that kind of file only, so the release after it
-carries one too; from then on the image is all there is.)
+(A box still running release 2026.10.27 cannot take an image on its Host
+Management page, only the `coreelec_..._slot.tar` bundles that release had.
+To move it to a later release, write the new image to its stick as for a
+first install; `dovi.ko` is captured again from the Dolby Vision stick.)
 
 Check the download:
 
@@ -516,7 +517,7 @@ A.
 1. Download the new release's `...-am9pro-usb.img.gz`, the same file a first
    install writes to a stick: the page installs the system inside it. (It
    also takes a `coreelec_..._slot.tar` slot bundle, the same system without
-   the rest of the stick; a box on 2026.10.27 takes only that.)
+   the rest of the stick, as built locally.)
 2. Open `http://symphony-coreelec-0.local/host_management`. It shows both
    slots, which one is running, and the CoreELEC and Kodi commits each was
    built from.
