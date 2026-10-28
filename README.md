@@ -99,13 +99,15 @@ layer's window for the left eye covered the right eye. The kernel's video
 driver now sizes that window from the frame's own left-eye height, and the
 on-screen display is clipped to the frame-packed output.
 
-### VC-1 and MPEG-2 play without artifacts
+### VC-1 plays without artifacts
 
-On the AM9 Pro, the hardware VC-1 and MPEG-2 decoders put short horizontal
-line artifacts on moving pictures (a known, unresolved AM9 problem). This
-build decodes VC-1 and MPEG-1/2 in software on this chip instead, cleanly,
-at 10-28% CPU per core. Every other codec, and every other chip, is
-unchanged.
+On the AM9 Pro, hardware VC-1 showed short horizontal lines on moving
+pictures. The decoder was innocent: CoreELEC's VC-1 driver copies every
+progressive frame on the CPU through a cacheable mapping with no cache
+maintenance, and the lines were stale cache lines of an older frame. This
+build's driver invalidates the source before the copy, writes the copy back
+before the display reads it, and releases the decode buffer only after the
+copy. VC-1 and MPEG-2 decode in hardware.
 
 ### HDMI output
 
@@ -229,9 +231,8 @@ unchanged.
 
 ### Video output
 
-- A software-decoded segment (for example an MPEG-2 film after a
-  hardware-decoded menu) gets a renderer that can draw it, and its frames
-  are released: this was a memory leak that ran the box out of memory.
+- A software-decoded segment after a hardware-decoded menu gets a
+  renderer that can draw it, and its frames are released: this was a memory leak that ran the box out of memory.
 - 3D Blu-rays switch the output to frame packing with Kodi's default mode
   list (no whitelist set up): on a 4K GUI that list used to leave out every
   1080p frame-packed mode, so 3D played without switching.
