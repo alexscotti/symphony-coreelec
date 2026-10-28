@@ -369,14 +369,13 @@ From this repository's **Releases** page, download:
 | `...-am9pro-usb.img.gz` | the system image: written to a stick for the first install, uploaded to the box for every update after it |
 | `...-am9pro-usb.img.gz.sha256` | its checksum |
 
-A release also carries the build's other outputs, for anyone who wants them.
+A release also carries two tars, for anyone who wants them.
 They are **untested**; the image above is the tested way in:
 
 | file | what |
 |---|---|
 | `CoreELEC-...-Symphony_<version>.tar` | CoreELEC's own update tar (kernel + system), for `/storage/.update` on a single-slot CoreELEC install. A Symphony stick refuses it: its slots update from the image |
 | `coreelec_<date>_<version>_aarch64_slot.tar` | a slot bundle, for `am9usb install` |
-| `...-Generic.img.gz` | CoreELEC's bare Generic image, as upstream publishes it |
 
 (A box still running release 2026.10.27 cannot take an image on its Host
 Management page, only the `coreelec_..._slot.tar` bundles that release had.
