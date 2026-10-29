@@ -99,6 +99,21 @@ layer's window for the left eye covered the right eye. The kernel's video
 driver now sizes that window from the frame's own left-eye height, and the
 on-screen display is clipped to the frame-packed output.
 
+The right eye no longer goes black after a Dolby Vision dual-layer title.
+The second eye is read by the second video layer, which a dual-layer title
+also uses, for its enhancement layer, through the compressed-frame decoder.
+Its source select stayed there afterwards, and 3D never set it back, so
+every 3D title showed a black right eye until the box lost power. The video
+driver now selects plain reads for that layer whenever it sets it up for 3D.
+
+A vertically shifted 3D picture no longer leaves the next one misaligned.
+Kodi grows the driver's gap between the eyes by the shift so both eyes move
+together, and it used to read the "default" gap back from the driver: after
+Kodi restarted under a shifted picture, it took the shifted gap for the
+default, and every later 3D title had its right eye a few lines low. The gap
+now returns to the frame-packing standard's 45 lines, and closing a title
+also clears the 3D mode it gave the video driver.
+
 ### VC-1 plays without artifacts
 
 On the AM9 Pro, hardware VC-1 showed short horizontal lines on moving
