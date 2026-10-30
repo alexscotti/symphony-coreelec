@@ -385,11 +385,6 @@ From this repository's **Releases** page, download:
 | `...-am9pro-usb.img.gz` | the system image: written to a stick for the first install, uploaded to the box for every update after it |
 | `...-am9pro-usb.img.gz.sha256` | its checksum |
 
-(A box still running release 2026.10.27 cannot take an image on its Host
-Management page, only the `coreelec_..._slot.tar` bundles that release had.
-To move it to a later release, write the new image to its stick as for a
-first install; `dovi.ko` is captured again from the Dolby Vision stick.)
-
 Check the download:
 
 ```
