@@ -205,7 +205,7 @@ case "$cmd" in
     [ "$sel" = "$r" ] || die "slot.ini already selects $sel but $r is running - a switch is pending; reboot or goback first"
     t="$(other "$r")"
     kodi_playing; rc=$?
-    [ $rc -eq 0 ] && die "Kodi is playing - refusing"
+    [ $rc -eq 0 ] && die "Kodi is playing something (a video, live TV or radio, music; paused counts too) - stop playback in Kodi and try again"
     [ $rc -eq 2 ] && die "cannot ask Kodi whether it is playing - refusing"
 
     for f in kernel.img SYSTEM MANIFEST; do [ -s "$src/$f" ] || die "$src/$f missing or empty"; done
@@ -328,7 +328,7 @@ case "$cmd" in
       die "slot $nsel's extension ($nver) is not in $X - wiping would lose what it keeps"
     fi
     kodi_playing; rc=$?
-    [ $rc -eq 0 ] && die "Kodi is playing - refusing"
+    [ $rc -eq 0 ] && die "Kodi is playing something (a video, live TV or radio, music; paused counts too) - stop playback in Kodi and try again"
     [ $rc -eq 2 ] && die "cannot ask Kodi whether it is playing - refusing"
 
     # Kodi rewrites guisettings.xml when it shuts down, so a wipe with Kodi

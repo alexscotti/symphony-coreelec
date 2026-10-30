@@ -539,7 +539,11 @@ A.
    interrupted upload carries on where it stopped.
 4. Press **Install**. The bundle's checksums are verified and it is written
    into the slot that is NOT running. Nothing can be installed while
-   something is playing.
+   Kodi is playing anything: a video, live TV or radio (e.g. Tvheadend),
+   music, or something paused. The install then fails with "Kodi is playing
+   something"; nothing has been written, so stop playback and press
+   **Install** again (no need to upload again). If Kodi starts live TV by
+   itself at boot (the PVR startup action), stop it first.
 5. Press **Reboot**. The box starts the new system.
 
 If the new system is not right, press **Go back** and reboot: the previous

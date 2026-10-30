@@ -183,6 +183,7 @@ run goback;          expect_rc 1 "goback refused: B empty"; has "does not verify
 # --- Kodi
 reset
 AM9SLOT_KODI=playing run install $W/v2; expect_rc 1 "refused while Kodi plays"
+has "stop playback in Kodi" "Kodi refusal says what to do"
 AM9SLOT_KODI=error   run install $W/v2; expect_rc 1 "refused when Kodi cannot be asked"
 [ ! -f $W/flash/SLOT_B.manifest ] && ok "nothing written while refused" || bad "manifest B written"
 
