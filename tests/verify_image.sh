@@ -47,15 +47,18 @@ for p in /usr/config/rc_maps.cfg /usr/config/rc_keymaps/ugoos_ur02.toml /usr/con
   have "$p" "$p"
 done
 
-# --- the theater flavor (SYMPHONY_THEATER=yes) adds the skin and
-# symphony-config; a public build must carry none of it
+# --- the theater flavor (SYMPHONY_THEATER=yes) adds the skin, symphony-config
+# and makemkv; a public build must carry none of it (and MakeMKV's license
+# forbids redistributing makemkvcon, so for that one it is not a preference)
 THEATER_PATHS="/usr/config/autostart.sh /usr/cache/services/sshd.conf /usr/cache/services/samba.conf
   /usr/cache/timezone /usr/cache/journald.conf.d/00_settings.conf
   /usr/share/symphony/guisettings.d/50-theater.xml
   /usr/share/symphony/userdata/peripheral_data/cec_HDMI.xml
   /usr/share/symphony/userdata/addon_data/service.coreelec.settings/oe_settings.xml
   /usr/lib/systemd/system/tz-data.service.d/tz-data-after-usercache.conf
-  /usr/share/kodi/addons/skin.estuary.symphony/addon.xml"
+  /usr/share/kodi/addons/skin.estuary.symphony/addon.xml
+  /usr/bin/makemkvcon /usr/lib/libmmbd.so.0 /usr/lib/libmakemkv.so.1 /usr/lib/libdriveio.so.0
+  /usr/share/MakeMKV/appdata.tar"
 if [ "$FLAVOR" = theater ]; then
   for p in $THEATER_PATHS; do have "$p" "$p"; done
 else
