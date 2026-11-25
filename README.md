@@ -470,10 +470,11 @@ whenever it is plugged in.
    and run it. (These programs have not yet been run against a real box in
    Android: if one fails, use the manual adb steps below, and please open
    an issue.)
-   - **Mac:** `am9-first-boot.command`. Double-click it. The first time,
-     macOS says it was "Not Opened": choose **Done**, then open System
-     Settings -> Privacy & Security, scroll down to the message about
-     `am9-first-boot.command`, choose **Open Anyway**, and confirm.
+   - **Mac:** `am9-first-boot.command`. Open Terminal (Applications ->
+     Utilities) and type, then press Return:
+     `zsh ~/Downloads/am9-first-boot.command`
+     (A browser download cannot be double-clicked: macOS refuses to run
+     it.)
    - **Windows:** `am9-first-boot.cmd` and `am9-first-boot.ps1`, in the same
      folder. Double-click `am9-first-boot.cmd`. If Windows says "Windows
      protected your PC", choose **More info**, then **Run anyway**.
