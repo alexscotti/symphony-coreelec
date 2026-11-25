@@ -300,10 +300,11 @@ print
 read -r "ans?Sticks in? Press Return to restart the box into Symphony (or type q to stop): "
 [[ "${ans:l}" == q* ]] && fail "stopped; nothing was changed."
 
-"$ADB" -s "$T" reboot update >/dev/null 2>&1
+out="$("$ADB" -s "$T" reboot update 2>&1)"
 rc=$?
 "$ADB" disconnect "$T" >/dev/null 2>&1
-(( rc == 0 )) || fail "the box did not accept the restart command (adb exit $rc)."
+(( rc == 0 )) || fail "the box did not accept the restart command (adb exit $rc).
+  adb said: ${out:-nothing}"
 
 print
 say_ "Done. The box is restarting into Symphony CoreELEC."

@@ -311,10 +311,13 @@ Write-Host ''
 $ans = Read-Host 'Sticks in? Press Enter to restart the box into Symphony (or type q to stop)'
 if ($ans -match '^[qQ]') { Fail 'stopped; nothing was changed.' }
 
-Adb @('-s', $T, 'reboot', 'update') | Out-Null
+$out = (Adb @('-s', $T, 'reboot', 'update')).Trim()
 $rc = $LASTEXITCODE
 Adb @('disconnect', $T) | Out-Null
-if ($rc -ne 0) { Fail "the box did not accept the restart command (adb exit $rc)." }
+if ($rc -ne 0) {
+    if (-not $out) { $out = 'nothing' }
+    Fail "the box did not accept the restart command (adb exit $rc).`n  adb said: $out"
+}
 
 Write-Host ''
 Write-Host 'Done. The box is restarting into Symphony CoreELEC.'
