@@ -297,8 +297,9 @@ Platform:
 - **BD-J Java runtime in the image.** Disc menus written in Java work out of
   the box. No add-on to install.
 - **Dolby Vision module capture.** CoreELEC cannot ship Amlogic's `dovi.ko`
-  and neither does this build. Put `dovi.ko` in the root of any FAT32 USB
-  stick, plug it in, and boot: the box copies it to
+  and neither does this build. Put the module (any file name ending `.ko`)
+  in the root of any FAT32 or exFAT USB stick, plug it in, and boot: the box
+  copies it to
   `/storage/.config/dovi.ko`, where CoreELEC's loader finds it. The file is
   checked first (an aarch64 kernel module, the Dolby Vision driver, a recent
   enough kernel) so a wrong or truncated file is reported, not loaded. The
@@ -423,14 +424,14 @@ FEL-fixed module from the CoreELEC forum:
 
 On the small stick:
 
-1. Copy the module to the **root** of the stick and rename it to exactly
-   `dovi.ko`. Check the name: some browsers append an extension
-   (`dovi.ko.ko`), and the box will not find it.
+1. Copy the module to the **root** of the stick, as downloaded: no need to
+   rename it.
 2. Eject it.
 
-At boot, the box looks at every FAT32 stick for `dovi.ko` in its root,
-checks that it is an aarch64 kernel module that is the Dolby Vision driver
-for a recent enough kernel, and copies it to `/storage/.config/dovi.ko`.
+At boot, the box looks in the root of every FAT32 or exFAT stick for a file
+ending `.ko` (`dovi.ko` first), checks that it is an aarch64 kernel module
+that is the Dolby Vision driver for a recent enough kernel, and copies it to
+`/storage/.config/dovi.ko`.
 From then on it loads from there; the stick is only ever read and can be
 removed. Keep it, though: a new system stick, or a reset of `/storage`,
 needs it again, and leaving it plugged in costs nothing (a box that already
@@ -650,8 +651,9 @@ internet.
   bundles carry none).
 - **SSH is on by default with CoreELEC's default root password, `coreelec`.**
   Change it with `passwd` on first boot.
-- **A USB stick present at boot can supply a kernel module.** `dovi.ko` is
-  taken from any FAT32 stick when the box does not already have a valid one.
+- **A USB stick present at boot can supply a kernel module.** A `.ko` file is
+  taken from any FAT32 or exFAT stick when the box does not already have a
+  valid one.
   The checks are sanity checks, not a signature, so physical access to the
   box means the ability to load kernel code.
 - **Samba file sharing is off** in this build (CoreELEC turns it on by
