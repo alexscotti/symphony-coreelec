@@ -402,7 +402,7 @@ FAT partition (`COREELEC`) and a Linux partition (`STORAGE`).
   system image. The system image then fails its checksum and the box hangs
   at the Ugoos logo, which looks exactly like a broken build. It does not
   happen every time. Eject the stick the moment the writer finishes, and
-  never open it in Finder. If the box hangs at the logo, write the stick
+  never plug it back into the Mac or open it in Finder. If the box hangs at the logo, write the stick
   again.
 - On **Windows**, a prompt to format the `STORAGE` partition may appear,
   because Windows cannot read it. Cancel it. Never format.
