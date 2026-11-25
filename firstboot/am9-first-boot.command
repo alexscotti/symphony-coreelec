@@ -254,13 +254,9 @@ if [[ "$norm" != "AM9_PRO" ]]; then
 fi
 
 # ------------------------------------------------------------ firmware
-# TODO: pin the property Ugoos keeps "2.2.0" in, read once from a box with
-# `adb shell getprop`. Until then: the first x.y.z found in these.
-FW_RAW=""
-for p in ro.build.display.id ro.build.version.incremental ro.product.version ro.build.description; do
-  v="$(prop "$p")"
-  [[ -n "$v" ]] && FW_RAW="$FW_RAW $v"
-done
+# Ugoos keeps the firmware version in ro.product.version ("2.2.0", read
+# from an AM9 Pro on 2.2.0, 2026-11-25).
+FW_RAW=" $(prop ro.product.version)"
 FW=""
 if [[ "$FW_RAW" =~ '(^|[^0-9.])v?([0-9]+)\.([0-9]+)\.([0-9]+)([^0-9.]|$)' ]]; then
   FW_PARTS=("${match[2]}" "${match[3]}" "${match[4]}")
