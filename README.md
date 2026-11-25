@@ -379,19 +379,9 @@ above, and the library is re-run against new builds.
 
 ### 1. Download a release
 
-From this repository's **Releases** page, download:
-
-| file | what |
-|---|---|
-| `...-am9pro-usb.img.gz` | the system image: written to a stick for the first install, uploaded to the box for every update after it |
-| `...-am9pro-usb.img.gz.sha256` | its checksum |
-
-Check the download:
-
-```
-shasum -a 256 -c <image>.img.gz.sha256        # macOS / Linux
-certutil -hashfile <image>.img.gz SHA256      # Windows: compare by eye
-```
+From this repository's **Releases** page, download the system image,
+`...-am9pro-usb.img.gz`. It is written to a stick for the first install,
+and uploaded to the box for every update after it.
 
 ### 2. Write the stick
 
