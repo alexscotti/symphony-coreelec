@@ -16,9 +16,9 @@
 # server runs on its own port and is stopped at the end, so an adb the user
 # already has is not touched.
 #
-# Run it in Terminal: zsh ~/Downloads/am9-first-boot.command
-# A browser download loses its execute permission and is quarantined, so
-# macOS will not run it from a double-click; through zsh needs neither.
+# Shipped inside am9-first-boot.dmg (make-dmg.sh), which keeps its execute
+# permission: a bare .command downloaded by a browser loses it, and Finder
+# then refuses to run it. Double-click it in the disk image's window.
 
 PT_VERSION=37.0.1
 PT_URL="https://dl.google.com/android/repository/platform-tools_r${PT_VERSION}-darwin.zip"
