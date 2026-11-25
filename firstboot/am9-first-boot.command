@@ -10,7 +10,7 @@
 # accepted, check the box is an AM9 Pro on firmware 2.2.0 or later, and make
 # sure the stick is in.
 #
-# Uses only what every Mac has (zsh, curl, unzip, shasum, nc). adb is
+# Uses only what every Mac has (zsh, curl, unzip, shasum, nc, host). adb is
 # Google's own platform-tools, downloaded once into ~/Library/Caches and
 # checked against a pinned SHA-256; nothing is installed system-wide. The adb
 # server runs on its own port and is stopped at the end, so an adb the user
@@ -55,8 +55,9 @@ Symphony CoreELEC - first boot of a Ugoos AM9 Pro
 
 Before you start:
   - The AM9 Pro is on, in Android, on the same network as this Mac.
-  - You know its IP address (Android: Settings -> Network & Internet ->
-    your connection).
+  - This program looks for the box on the network. If it cannot find it,
+    it asks for the box's IP address (Android: Settings -> Network &
+    Internet -> your connection).
   - The Symphony system stick is written and in your hand.
   - The Dolby Vision stick (dovi.ko) is ready, if you have one.
 EOF
@@ -90,13 +91,112 @@ valid_ip() {
   return 0
 }
 
-while true; do
+# The Mac's own IPv4 network (the default route's interface), as the list of
+# addresses to scan. A network wider than /22 is scanned only in the Mac's
+# own /24, so a scan never takes more than a few seconds.
+local_hosts() {
+  local ifc line ip m a net bc h
+  ifc="$(route -n get default 2>/dev/null | awk '/interface:/ { print $2 }')"
+  [[ -n "$ifc" ]] || return 1
+  line="$(ifconfig "$ifc" 2>/dev/null | awk '$1 == "inet" && $3 == "netmask" { print $2, $4; exit }')"
+  ip="${line%% *}"; m="${line##* }"
+  valid_ip "$ip" && [[ "$m" == 0x* ]] || return 1
+  local -a o=( ${(s:.:)ip} )
+  a=$(( (o[1] << 24) | (o[2] << 16) | (o[3] << 8) | o[4] ))
+  m=$(( m ))
+  (( m < 0xfffffc00 )) && m=$(( 0xffffff00 ))
+  net=$(( a & m )); bc=$(( net | (~m & 0xffffffff) ))
+  HOSTS=()
+  for (( h = net + 1; h < bc; h++ )); do
+    (( h == a )) && continue
+    HOSTS+=( "$(( (h >> 24) & 255 )).$(( (h >> 16) & 255 )).$(( (h >> 8) & 255 )).$(( h & 255 ))" )
+  done
+  NET_DESC="$(( (net >> 24) & 255 )).$(( (net >> 16) & 255 )).$(( (net >> 8) & 255 )).$(( net & 255 ))"
+  (( ${#HOSTS} > 0 ))
+}
+
+# Every address on the network answering on adb's port 5555, in FOUND.
+# Only the port is tried: connecting adb to a device would put the "Allow USB
+# debugging?" question on its screen (a TV with debugging on, for one).
+scan() {
+  local tmp ip n=0
+  FOUND=()
+  tmp="$(mktemp -d)" || return 1
+  for ip in "${HOSTS[@]}"; do
+    { nc -z -G 1 -w 1 "$ip" 5555 >/dev/null 2>&1 && : > "$tmp/$ip" } &
+    (( ++n % 128 == 0 )) && wait
+  done
+  wait
+  FOUND=( ${(f)"$(ls "$tmp" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n)"} )
+  rm -rf "$tmp"
+}
+
+# The network's name for an address, if it has one.
+name_of() {
+  host -W 1 "$1" 2>/dev/null | awk '/domain name pointer/ { sub(/\.$/, "", $NF); print $NF; exit }'
+}
+
+label() {
+  local n="$(name_of "$1")"
+  print -r -- "$1${n:+  ($n)}"
+}
+
+ask_ip() {
+  while true; do
+    print
+    read -r "IP?The AM9 Pro's IP address (Android: Settings -> Network & Internet -> your connection): " || fail "no answer typed."
+    IP="${IP//[[:space:]]/}"
+    valid_ip "$IP" && return 0
+    say_ "That is not an IP address. It is four numbers separated by dots."
+  done
+}
+
+IP=""
+step "Looking for Android boxes with network debugging on"
+if local_hosts; then
+  say_ "Scanning $NET_DESC (${#HOSTS} addresses)..."
+  scan
+else
+  FOUND=()
+  say_ "Could not work out this Mac's network."
+fi
+
+if (( ${#FOUND} == 0 )); then
+  say_ "None found."
+  ask_ip
+elif (( ${#FOUND} == 1 )); then
+  say_ "Found: $(label "$FOUND[1]")"
   print
-  read -r "IP?The AM9 Pro's IP address (for example 192.168.1.50): "
-  IP="${IP//[[:space:]]/}"
-  valid_ip "$IP" && break
-  say_ "That is not an IP address. It is four numbers separated by dots."
-done
+  read -r "ans?Press Return to use it, or type the box's IP address: " || fail "no answer typed."
+  ans="${ans//[[:space:]]/}"
+  if [[ -z "$ans" ]]; then
+    IP="$FOUND[1]"
+  elif valid_ip "$ans"; then
+    IP="$ans"
+  else
+    say_ "That is not an IP address."
+    ask_ip
+  fi
+else
+  say_ "Found ${#FOUND}. Any Android device with network debugging on answers,"
+  say_ "a TV for example, so pick the AM9 Pro:"
+  i=0
+  for f in "${FOUND[@]}"; do
+    (( ++i ))
+    say_ "  $i) $(label "$f")"
+  done
+  while true; do
+    print
+    read -r "ans?Number of the AM9 Pro (or type its IP address): " || fail "no answer typed."
+    ans="${ans//[[:space:]]/}"
+    if [[ "$ans" == <-> ]] && (( ans >= 1 && ans <= ${#FOUND} )); then
+      IP="$FOUND[ans]"; break
+    elif valid_ip "$ans"; then
+      IP="$ans"; break
+    fi
+    say_ "Type a number from the list (1 to ${#FOUND}), or an IP address."
+  done
+fi
 T="$IP:5555"
 
 step "Looking for the box at $IP"

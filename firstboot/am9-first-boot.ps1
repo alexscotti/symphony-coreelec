@@ -61,8 +61,9 @@ Symphony CoreELEC - first boot of a Ugoos AM9 Pro
 
 Before you start:
   - The AM9 Pro is on, in Android, on the same network as this PC.
-  - You know its IP address (Android: Settings -> Network & Internet ->
-    your connection).
+  - This program looks for the box on the network. If it cannot find it,
+    it asks for the box's IP address (Android: Settings -> Network &
+    Internet -> your connection).
   - The Symphony system stick is written and in your hand.
   - The Dolby Vision stick (dovi.ko) is ready, if you have one.
 '@
@@ -94,11 +95,111 @@ function Test-Ip([string]$s) {
     return $true
 }
 
-while ($true) {
+function ConvertTo-Ip([int64]$n) {
+    return '{0}.{1}.{2}.{3}' -f (($n -shr 24) -band 255), (($n -shr 16) -band 255), (($n -shr 8) -band 255), ($n -band 255)
+}
+
+# This PC's IPv4 network (an adapter that is up and has a gateway), as the
+# list of addresses to scan. A network wider than /22 is scanned only in the
+# PC's own /24, so a scan never takes more than a few seconds.
+function Get-LocalHosts {
+    $a = 0; $m = 0
+    foreach ($nic in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+        if ($nic.OperationalStatus -ne 'Up' -or $nic.NetworkInterfaceType -eq 'Loopback') { continue }
+        $props = $nic.GetIPProperties()
+        $gw = $props.GatewayAddresses | Where-Object {
+            $_.Address.AddressFamily -eq 'InterNetwork' -and $_.Address.ToString() -ne '0.0.0.0' }
+        if (-not $gw) { continue }
+        $u = $props.UnicastAddresses | Where-Object {
+            $_.Address.AddressFamily -eq 'InterNetwork' -and $_.IPv4Mask -and $_.IPv4Mask.ToString() -ne '0.0.0.0' } |
+            Select-Object -First 1
+        if (-not $u) { continue }
+        $ab = $u.Address.GetAddressBytes(); $mb = $u.IPv4Mask.GetAddressBytes()
+        $a = ([int64]$ab[0] -shl 24) + ([int64]$ab[1] -shl 16) + ([int64]$ab[2] -shl 8) + $ab[3]
+        $m = ([int64]$mb[0] -shl 24) + ([int64]$mb[1] -shl 16) + ([int64]$mb[2] -shl 8) + $mb[3]
+        break
+    }
+    if ($m -eq 0) { return $null }
+    if ($m -lt 0xFFFFFC00L) { $m = 0xFFFFFF00L }
+    $net = $a -band $m
+    $bc = $net -bor ((-bnot $m) -band 0xFFFFFFFFL)
+    $list = @(for ($h = $net + 1; $h -lt $bc; $h++) { if ($h -ne $a) { ConvertTo-Ip $h } })
+    if ($list.Count -eq 0) { return $null }
+    return @{ Net = (ConvertTo-Ip $net); Hosts = $list }
+}
+
+# Every address answering on adb's port 5555. Only the port is tried:
+# connecting adb to a device would put the "Allow USB debugging?" question on
+# its screen (a TV with debugging on, for one).
+function Find-Adb($hosts) {
+    $found = @()
+    for ($i = 0; $i -lt $hosts.Count; $i += 256) {
+        $batch = @()
+        foreach ($h in $hosts[$i..([Math]::Min($i + 255, $hosts.Count - 1))]) {
+            $c = New-Object Net.Sockets.TcpClient
+            $batch += , @($h, $c, $c.ConnectAsync($h, 5555))
+        }
+        Start-Sleep -Milliseconds 1500
+        foreach ($b in $batch) {
+            if ($b[2].Status -eq 'RanToCompletion' -and $b[1].Connected) { $found += $b[0] }
+            $b[1].Close()
+        }
+    }
+    return @($found | Sort-Object { [version]$_ })
+}
+
+# "address  (the network's name for it)", the name when it has one.
+function Get-Label([string]$ip) {
+    $t = [Net.Dns]::GetHostEntryAsync($ip)
+    try {
+        if ($t.Wait(1500) -and $t.Result.HostName -and $t.Result.HostName -ne $ip) {
+            return "$ip  ($($t.Result.HostName))"
+        }
+    } catch { }
+    return $ip
+}
+
+function Read-Ip {
+    while ($true) {
+        Write-Host ''
+        $s = (Read-Host "The AM9 Pro's IP address (Android: Settings -> Network & Internet -> your connection)") -replace '\s', ''
+        if (Test-Ip $s) { return $s }
+        Write-Host 'That is not an IP address. It is four numbers separated by dots.'
+    }
+}
+
+Step 'Looking for Android boxes with network debugging on'
+$found = @()
+$lan = Get-LocalHosts
+if ($lan) {
+    Write-Host "Scanning $($lan.Net) ($($lan.Hosts.Count) addresses)..."
+    $found = @(Find-Adb $lan.Hosts)
+} else {
+    Write-Host "Could not work out this PC's network."
+}
+
+if ($found.Count -eq 0) {
+    Write-Host 'None found.'
+    $Ip = Read-Ip
+} elseif ($found.Count -eq 1) {
+    Write-Host "Found: $(Get-Label $found[0])"
     Write-Host ''
-    $Ip = (Read-Host "The AM9 Pro's IP address (for example 192.168.1.50)") -replace '\s', ''
-    if (Test-Ip $Ip) { break }
-    Write-Host 'That is not an IP address. It is four numbers separated by dots.'
+    $ans = (Read-Host "Press Enter to use it, or type the box's IP address") -replace '\s', ''
+    if (-not $ans) { $Ip = $found[0] }
+    elseif (Test-Ip $ans) { $Ip = $ans }
+    else { Write-Host 'That is not an IP address.'; $Ip = Read-Ip }
+} else {
+    Write-Host "Found $($found.Count). Any Android device with network debugging on answers,"
+    Write-Host 'a TV for example, so pick the AM9 Pro:'
+    for ($i = 0; $i -lt $found.Count; $i++) { Write-Host "  $($i + 1)) $(Get-Label $found[$i])" }
+    while ($true) {
+        Write-Host ''
+        $ans = (Read-Host 'Number of the AM9 Pro (or type its IP address)') -replace '\s', ''
+        $n = 0
+        if ([int]::TryParse($ans, [ref]$n) -and $n -ge 1 -and $n -le $found.Count) { $Ip = $found[$n - 1]; break }
+        if (Test-Ip $ans) { $Ip = $ans; break }
+        Write-Host "Type a number from the list (1 to $($found.Count)), or an IP address."
+    }
 }
 $T = "${Ip}:5555"
 
