@@ -277,8 +277,8 @@ if [[ -n "$FW" ]]; then
   say_ "Firmware: $FW"
   if older "${FW_PARTS[@]}"; then
     fail "firmware $FW is too old: this build needs 2.2.0 or later.
-  Update Android first (Settings -> Device Preferences -> About: the box
-  updates itself online), then run this again."
+  Update Android first (Settings -> Device Preferences -> About ->
+  System update: the box updates itself online), then run this again."
   fi
 else
   say_ "Firmware: could not read a version number from the box."
