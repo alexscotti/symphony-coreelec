@@ -371,7 +371,7 @@ above, and the library is re-run against new builds.
 - **A USB 3.0 stick of 8 GB or more** for the system (the image is about
   6 GB uncompressed). USB 3.0 is measurably faster than an SD card on this
   box.
-- **A second, small FAT32 USB stick** for Amlogic's Dolby Vision module (any
+- **A second, small USB stick** for Amlogic's Dolby Vision module (any
   size; the file is under 1 MB).
 - A Mac or Windows PC on the same network as the box, for the one-time
   switch from Android (step 4).
@@ -423,11 +423,10 @@ FEL-fixed module from the CoreELEC forum:
 
 On the small stick:
 
-1. Format it FAT32.
-2. Copy the module to the **root** of the stick and rename it to exactly
+1. Copy the module to the **root** of the stick and rename it to exactly
    `dovi.ko`. Check the name: some browsers append an extension
    (`dovi.ko.ko`), and the box will not find it.
-3. Eject it.
+2. Eject it.
 
 At boot, the box looks at every FAT32 stick for `dovi.ko` in its root,
 checks that it is an aarch64 kernel module that is the Dolby Vision driver
