@@ -460,8 +460,8 @@ whenever it is plugged in.
    starts with a screen asking you to pair the remote: follow its
    instructions.
 2. If Android asks you to choose a home app, choose one. Then open Settings
-   (the gear icon, lower left) -> Network & Internet, and check Ethernet
-   shows as connected, with an IP address.
+   (the gear icon, lower left) -> Network & Internet, turn Wi-Fi off, and
+   check Ethernet shows as connected, with an IP address.
 3. Still in Settings: check About says firmware **2.2.0** or later (if
    not, update it first: Settings -> About -> System update -> Local
    update, with the firmware zip from Ugoos' AM9 Pro page on a stick).
