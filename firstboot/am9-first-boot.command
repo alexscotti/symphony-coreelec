@@ -277,12 +277,12 @@ if [[ -n "$FW" ]]; then
   say_ "Firmware: $FW"
   if older "${FW_PARTS[@]}"; then
     fail "firmware $FW is too old: this build needs 2.2.0 or later.
-  Update Android first (Settings -> About -> System update -> Local update,
-  with the firmware from Ugoos' AM9 Pro page), then run this again."
+  Update Android first (Settings -> Device Preferences -> About: the box
+  updates itself online), then run this again."
   fi
 else
   say_ "Firmware: could not read a version number from the box."
-  say_ "Check Settings -> About on the TV: it must say 2.2.0 or later."
+  say_ "Check Settings -> Device Preferences -> About on the TV: it must say 2.2.0 or later."
   read -r "ans?Is it 2.2.0 or later? (y/n) "
   [[ "${ans:l}" == y* ]] || fail "update Android to 2.2.0 or later first, then run this again."
 fi

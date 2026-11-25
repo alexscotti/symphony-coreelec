@@ -462,9 +462,10 @@ whenever it is plugged in.
 2. If Android asks you to choose a home app, choose one. Then open Settings
    (the gear icon, lower left) -> Network & Internet, turn Wi-Fi off, and
    check Ethernet shows as connected, with an IP address.
-3. Still in Settings: check About says firmware **2.2.0** or later (if
-   not, update it first: Settings -> About -> System update -> Local
-   update, with the firmware zip from Ugoos' AM9 Pro page on a stick).
+3. In the same Settings menu, go to Device Preferences -> About and note
+   the firmware version. If it is older than **2.2.0**, update it first:
+   the box can update itself online, with its remote, over its internet
+   connection.
 4. Download the first-boot program from this repository's [Releases page](https://github.com/alexscotti/symphony-coreelec/releases/latest)
    and run it. (These programs have not yet been run against a real box in
    Android: if one fails, use the manual adb steps below, and please open
