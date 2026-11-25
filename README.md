@@ -463,9 +463,9 @@ whenever it is plugged in.
    (the gear icon, lower left) -> Network & Internet, turn Wi-Fi off, and
    check Ethernet shows as connected, with an IP address.
 3. In the same Settings menu, go to Device Preferences -> About and note
-   the firmware version. If it is older than **2.2.0**, update it first:
-   choose System update in the same About menu, and the box updates itself
-   online.
+   the firmware version: it must be **2.2.0** or later. Then choose System
+   update -> Check now. "The latest updates have already been installed"
+   means the box is up to date; otherwise install the update it offers.
 4. Download the first-boot program from this repository's [Releases page](https://github.com/alexscotti/symphony-coreelec/releases/latest)
    and run it. (These programs have not yet been run against a real box in
    Android: if one fails, use the manual adb steps below, and please open
