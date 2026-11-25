@@ -309,7 +309,6 @@ Platform:
   `symphony-coreelec-0.local`. A hostname set in CoreELEC's settings still
   takes precedence. Only on a slot stick: an existing CoreELEC install
   updated to this build with its update tar keeps its own hostname.
-- **Boot splash**: Symphony's musical notes.
 
 ## How it is tested
 
