@@ -459,11 +459,13 @@ whenever it is plugged in.
    the batteries in its remote, and switch the TV to that input. Android
    starts with a screen asking you to pair the remote: follow its
    instructions.
-2. On the box, in Android, with its remote: check Settings -> About says
-   firmware **2.2.0** or later (if not, update it first: Settings -> About
-   -> System update -> Local update, with the firmware zip from Ugoos' AM9
-   Pro page on a stick).
-3. Download the first-boot program from this repository's [Releases page](https://github.com/alexscotti/symphony-coreelec/releases/latest)
+2. If Android asks you to choose a home app, choose one. Then open Settings
+   (the gear icon, lower left) -> Network & Internet, and check Ethernet
+   shows as connected, with an IP address.
+3. Still in Settings: check About says firmware **2.2.0** or later (if
+   not, update it first: Settings -> About -> System update -> Local
+   update, with the firmware zip from Ugoos' AM9 Pro page on a stick).
+4. Download the first-boot program from this repository's [Releases page](https://github.com/alexscotti/symphony-coreelec/releases/latest)
    and run it. (These programs have not yet been run against a real box in
    Android: if one fails, use the manual adb steps below, and please open
    an issue.)
@@ -473,16 +475,16 @@ whenever it is plugged in.
    - **Windows:** `am9-first-boot.cmd` and `am9-first-boot.ps1`, in the same
      folder. Double-click `am9-first-boot.cmd`. If Windows says "Windows
      protected your PC", choose **More info**, then **Run anyway**.
-4. The program downloads Google's `adb` (once), then looks for the box on
+5. The program downloads Google's `adb` (once), then looks for the box on
    your network: every device answering on adb's network port. If it finds
    one, press Return to use it; if it finds several (a TV with network
    debugging on answers too), choose the AM9 Pro from the list. If it finds
    none, or not the right one, type the box's **IP address** (Android:
    Settings -> Network & Internet -> your connection). It then connects to
    the box and checks it is an AM9 Pro on firmware 2.2.0 or later.
-5. The TV asks **"Allow USB debugging?"**: tick **Always allow from this
+6. The TV asks **"Allow USB debugging?"**: tick **Always allow from this
    computer** and choose **Allow**.
-6. When the program says so, plug the system stick into one of the box's
+7. When the program says so, plug the system stick into one of the box's
    USB-A ports (all three are USB 3.0) and the Dolby Vision stick into
    another, then press Return (Enter). The box restarts into Symphony
    CoreELEC.
