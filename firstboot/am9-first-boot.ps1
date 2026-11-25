@@ -304,9 +304,10 @@ Plug the Symphony system stick into one of the box's USB-A ports (all
 three are USB 3.0), and the Dolby Vision stick (if you have one) into any
 other port.
 
-The box will restart from the stick. You should see the Symphony splash
-within a few seconds, then Kodi. This switch is needed only once: from now
-on the box starts from the stick whenever it is plugged in.
+The box will restart from the stick. The TV shows the Amlogic logo two or
+three times (the last one shifted), then Kodi's home screen. This switch is
+needed only once: from now on the box starts from the stick whenever it is
+plugged in.
 '@
 Write-Host ''
 $ans = Read-Host 'Sticks in? Press Enter to restart the box into Symphony (or type q to stop)'

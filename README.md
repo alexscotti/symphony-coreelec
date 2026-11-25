@@ -497,7 +497,8 @@ whenever it is plugged in.
 7. When the program says so, plug the system stick into one of the box's
    USB-A ports (all three are USB 3.0) and the Dolby Vision stick into
    another, then press Return (Enter). The box restarts into Symphony
-   CoreELEC.
+   CoreELEC: the TV shows the Amlogic logo two or three times (the last
+   one shifted), then Kodi's home screen.
 
 <details>
 <summary>Doing it by hand with adb</summary>
