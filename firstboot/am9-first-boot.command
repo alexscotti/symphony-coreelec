@@ -16,9 +16,11 @@
 # server runs on its own port and is stopped at the end, so an adb the user
 # already has is not touched.
 #
-# Shipped inside am9-first-boot.dmg (make-dmg.sh), which keeps its execute
-# permission: a bare .command downloaded by a browser loses it, and Finder
-# then refuses to run it. Double-click it in the disk image's window.
+# Run it from the Terminal app: zsh ~/Downloads/am9-first-boot.command
+# A double-click cannot work: a browser download loses its execute
+# permission, and even in a disk image that keeps it, Gatekeeper refuses an
+# unsigned downloaded script ("no usable signature"), Open Anyway or not.
+# Running it through zsh is not subject to either.
 
 PT_VERSION=37.0.1
 PT_URL="https://dl.google.com/android/repository/platform-tools_r${PT_VERSION}-darwin.zip"
