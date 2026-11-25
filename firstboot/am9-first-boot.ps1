@@ -300,8 +300,9 @@ firmware $fwText is too old: this build needs 2.2.0 or later.
 # ---------------------------------------------------------------- go
 Step 'Ready'
 Write-Host @'
-Plug the Symphony system stick into one of the box's USB-A ports (all three are USB 3.0),
-and the Dolby Vision stick (if you have one) into any other port.
+Plug the Symphony system stick into one of the box's USB-A ports (all
+three are USB 3.0), and the Dolby Vision stick (if you have one) into any
+other port.
 
 The box will restart from the stick. You should see the Symphony splash
 within a few seconds, then Kodi. This switch is needed only once: from now
