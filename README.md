@@ -379,7 +379,7 @@ above, and the library is re-run against new builds.
 
 ### 1. Download a release
 
-From this repository's **Releases** page, download the system image,
+From this repository's [Releases page](https://github.com/alexscotti/symphony-coreelec/releases/latest), download the system image,
 `...-am9pro-usb.img.gz`. It is written to a stick for the first install,
 and uploaded to the box for every update after it.
 
@@ -459,7 +459,7 @@ whenever it is plugged in.
    firmware **2.2.0** or later (if not, update it first: Settings -> About
    -> System update -> Local update, with the firmware zip from Ugoos' AM9
    Pro page on a stick).
-2. Download the first-boot program from this repository's Releases page
+2. Download the first-boot program from this repository's [Releases page](https://github.com/alexscotti/symphony-coreelec/releases/latest)
    and run it. (These programs have not yet been run against a real box in
    Android: if one fails, use the manual adb steps below, and please open
    an issue.)
